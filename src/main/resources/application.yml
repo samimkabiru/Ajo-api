@@ -9,3 +9,8 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-ttl-minutes: 15
+  refresh-token-ttl-days: 30
