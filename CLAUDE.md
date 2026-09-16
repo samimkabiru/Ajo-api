@@ -220,6 +220,8 @@ Money-path tests assert the invariant, not just the absence of
 exceptions. A rejection test asserts that nothing was persisted, not
 merely that an exception was thrown.
 
+AbstractIntegrationTest uses the Testcontainers singleton pattern deliberately — the container is started in a static initializer and is not annotated `@Container`. Adding `@Container` makes JUnit restart it per test class, which breaks Spring's cached contexts when two test classes share a configuration signature.
+
 ## Slice order
 
 1. ~~Ledger schema + `LedgerService.post()` + tests~~ — done
