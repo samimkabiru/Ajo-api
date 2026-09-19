@@ -222,6 +222,9 @@ merely that an exception was thrown.
 
 AbstractIntegrationTest uses the Testcontainers singleton pattern deliberately — the container is started in a static initializer and is not annotated `@Container`. Adding `@Container` makes JUnit restart it per test class, which breaks Spring's cached contexts when two test classes share a configuration signature.
 
+# Missed contributions. 
+A participant who misses a month's contribution stays ACTIVE — this is not an exit. The shortfall creates a `ShortfallClaim` for that cycle's beneficiary, settled when the arrears arrive. Arrears are netted against the participant's own payout when their cycle comes round: if they are owed 15 shares and owe 1, they collect 14. This means a participant who misses payments before collecting carries almost no risk to the group, since their payout is held. The risk case is missing payments after collecting.
+
 ## Slice order
 
 1. ~~Ledger schema + `LedgerService.post()` + tests~~ — done

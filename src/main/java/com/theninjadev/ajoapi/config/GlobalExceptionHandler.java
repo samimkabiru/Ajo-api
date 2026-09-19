@@ -14,6 +14,7 @@ import com.theninjadev.ajoapi.group.InsufficientRoleException;
 import com.theninjadev.ajoapi.group.InviteNotFoundException;
 import com.theninjadev.ajoapi.group.InviteNotPendingException;
 import com.theninjadev.ajoapi.group.NotGroupMemberException;
+import com.theninjadev.ajoapi.round.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -91,6 +92,46 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(CannotRemoveSelfException.class)
     public ProblemDetail handleCannotRemoveSelf(CannotRemoveSelfException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(RoundNotFoundException.class)
+    public ProblemDetail handleRoundNotFound(RoundNotFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(RoundNotFormingException.class)
+    public ProblemDetail handleRoundNotForming(RoundNotFormingException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(GroupHasActiveRoundException.class)
+    public ProblemDetail handleGroupHasActiveRound(GroupHasActiveRoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(AlreadyRoundParticipantException.class)
+    public ProblemDetail handleAlreadyRoundParticipant(AlreadyRoundParticipantException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(RoundParticipantNotFoundException.class)
+    public ProblemDetail handleRoundParticipantNotFound(RoundParticipantNotFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(InsufficientParticipantsException.class)
+    public ProblemDetail handleInsufficientParticipants(InsufficientParticipantsException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(UserNotGroupMemberException.class)
+    public ProblemDetail handleUserNotGroupMember(UserNotGroupMemberException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(RoundNotReadyException.class)
+    public ProblemDetail handleRoundNotReady(RoundNotReadyException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
