@@ -5,6 +5,7 @@ import com.theninjadev.ajoapi.auth.DuplicatePhoneException;
 import com.theninjadev.ajoapi.auth.InvalidCredentialsException;
 import com.theninjadev.ajoapi.auth.InvalidPhoneNumberException;
 import com.theninjadev.ajoapi.auth.InvalidRefreshTokenException;
+import com.theninjadev.ajoapi.contribution.*;
 import com.theninjadev.ajoapi.group.AlreadyGroupMemberException;
 import com.theninjadev.ajoapi.group.CannotRemoveLastAdminException;
 import com.theninjadev.ajoapi.group.CannotRemoveSelfException;
@@ -132,6 +133,46 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(RoundNotReadyException.class)
     public ProblemDetail handleRoundNotReady(RoundNotReadyException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(CycleNotFoundException.class)
+    public ProblemDetail handleCycleNotFound(CycleNotFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(RoundNotActiveException.class)
+    public ProblemDetail handleRoundNotActive(RoundNotActiveException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(CycleNotOpenException.class)
+    public ProblemDetail handleCycleNotOpen(CycleNotOpenException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(CycleAlreadyPaidException.class)
+    public ProblemDetail handleCycleAlreadyPaid(CycleAlreadyPaidException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(ParticipantNotInRoundException.class)
+    public ProblemDetail handleParticipantNotInRound(ParticipantNotInRoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(IncorrectContributionAmountException.class)
+    public ProblemDetail handleIncorrectContributionAmount(IncorrectContributionAmountException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(DuplicateContributionException.class)
+    public ProblemDetail handleDuplicateContribution(DuplicateContributionException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(MissingIdempotencyKeyException.class)
+    public ProblemDetail handleMissingIdempotencyKey(MissingIdempotencyKeyException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

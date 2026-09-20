@@ -50,4 +50,8 @@ public class Cycle {
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
+
+    public void open() {
+        this.status = CycleStatus.OPEN;
+    }
 }
