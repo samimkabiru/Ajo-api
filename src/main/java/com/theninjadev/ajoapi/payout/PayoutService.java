@@ -217,7 +217,7 @@ public class PayoutService {
         cycle.markPaid();
         cycleRepository.save(cycle);
 
-        var stale = swapRequestRepository.findPendingInvolving(List.of(beneficiary.getId()));
+        var stale = swapRequestRepository.findPendingInvolvingForUpdate(List.of(beneficiary.getId()));
         stale.forEach(rq -> rq.supersede(now));
         swapRequestRepository.saveAll(stale);
 

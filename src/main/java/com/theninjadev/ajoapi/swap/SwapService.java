@@ -8,31 +8,18 @@ import com.theninjadev.ajoapi.contribution.RoundNotActiveException;
 import com.theninjadev.ajoapi.group.GroupMember;
 import com.theninjadev.ajoapi.group.GroupMemberRepository;
 import com.theninjadev.ajoapi.group.NotGroupMemberException;
-import com.theninjadev.ajoapi.round.Cycle;
-import com.theninjadev.ajoapi.round.CycleRepository;
-import com.theninjadev.ajoapi.round.CycleStatus;
-import com.theninjadev.ajoapi.round.ParticipantStatus;
-import com.theninjadev.ajoapi.round.Round;
-import com.theninjadev.ajoapi.round.RoundParticipant;
-import com.theninjadev.ajoapi.round.RoundParticipantNotFoundException;
-import com.theninjadev.ajoapi.round.RoundParticipantRepository;
-import com.theninjadev.ajoapi.round.RoundNotFoundException;
-import com.theninjadev.ajoapi.round.RoundRepository;
-import com.theninjadev.ajoapi.round.RoundStatus;
-
-import java.time.Clock;
-import java.time.Instant;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
+import com.theninjadev.ajoapi.round.*;
+import jakarta.persistence.EntityManager;
 import lombok.AllArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @AllArgsConstructor
@@ -47,6 +34,8 @@ public class SwapService {
     private final UserMapper userMapper;
     private final SwapMapper swapMapper;
     private final Clock clock;
+    private final EntityManager entityManager;
+    private final SwapConstraints swapConstraints;
 
     @Transactional
     public SwapRequestSummary requestSwap(UUID callerId, UUID roundId, CreateSwapRequest request) {
@@ -156,13 +145,103 @@ public class SwapService {
                 .findByRoundIdAndRequesterParticipantIdAndStatus(roundId, caller.getId(), SwapStatus.PENDING));
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = SwapRequestStaleException.class)
     public SwapRequestSummary accept(UUID callerId, UUID swapId) {
-        // TODO: implemented by hand
-        throw new UnsupportedOperationException();
+
+        // Phase 1 — discovery, no locks. Only ids survive past the clear().
+        UUID roundId;
+        UUID requesterParticipantId;
+        UUID targetParticipantId;
+        UUID requesterCycleId;
+        UUID targetCycleId;
+        {
+            PositionSwapRequest discovered = positionSwapRequestRepository.findById(swapId)
+                    .orElseThrow(SwapRequestNotFoundException::new);
+            RoundParticipant discoveredTarget = participantOrThrow(discovered.getTargetParticipantId());
+
+            if (!discoveredTarget.getUserId().equals(callerId))
+                throw new NotSwapTargetException();
+
+            roundId = discovered.getRoundId();
+            requesterParticipantId = discovered.getRequesterParticipantId();
+            targetParticipantId = discovered.getTargetParticipantId();
+            requesterCycleId = cycleForBeneficiary(roundId, requesterParticipantId).getId();
+            targetCycleId = cycleForBeneficiary(roundId, targetParticipantId).getId();
+        }
+
+        entityManager.clear();
+
+        // Phase 2 — lock in protocol order, then reload everything fresh.
+        Map<UUID, Cycle> cyclesById = cycleRepository
+                .findAllByIdForUpdate(List.of(requesterCycleId, targetCycleId)).stream()
+                .collect(Collectors.toMap(Cycle::getId, Function.identity()));
+        Cycle requesterCycle = cyclesById.get(requesterCycleId);
+        Cycle targetCycle = cyclesById.get(targetCycleId);
+
+        PositionSwapRequest request = positionSwapRequestRepository.findByIdForUpdate(swapId)
+                .orElseThrow(SwapRequestNotFoundException::new);
+
+        if (request.getStatus() != SwapStatus.PENDING)
+            throw new SwapRequestNotPendingException();
+
+        Round round = getRoundOrThrow(roundId);
+
+        Map<UUID, RoundParticipant> participantsById = roundParticipantRepository
+                .findAllById(List.of(requesterParticipantId, targetParticipantId)).stream()
+                .collect(Collectors.toMap(RoundParticipant::getId, Function.identity()));
+        RoundParticipant requester = participantsById.get(requesterParticipantId);
+        RoundParticipant target = participantsById.get(targetParticipantId);
+
+        Instant now = Instant.now(clock);
+
+        // Anything that changed since the request was made means it's stale.
+        boolean stale =
+                round.getStatus() != RoundStatus.ACTIVE
+                        || requester.getStatus() != ParticipantStatus.ACTIVE
+                        || target.getStatus() != ParticipantStatus.ACTIVE
+                        || !requesterParticipantId.equals(requesterCycle.getBeneficiaryId())
+                        || !targetParticipantId.equals(targetCycle.getBeneficiaryId())
+                        || requesterCycle.getStatus() == CycleStatus.PAID
+                        || targetCycle.getStatus() == CycleStatus.PAID
+                        || request.getRequesterPosition() != requester.getPayoutPosition()
+                        || request.getTargetPosition() != target.getPayoutPosition();
+
+        if (stale) {
+            request.supersede(now);
+            throw new SwapRequestStaleException();   // committed thanks to noRollbackFor
+        }
+
+        // The exchange. Nothing below this line may throw SwapRequestStaleException.
+        swapConstraints.deferUniqueConstraints();
+
+        requesterCycle.reassignBeneficiary(targetParticipantId);
+        targetCycle.reassignBeneficiary(requesterParticipantId);
+
+        requester.assignPosition(request.getTargetPosition());
+        target.assignPosition(request.getRequesterPosition());
+
+        cycleRepository.saveAll(List.of(requesterCycle, targetCycle));
+        roundParticipantRepository.saveAll(List.of(requester, target));
+
+        request.accept(now);
+
+        var others = positionSwapRequestRepository
+                .findPendingInvolvingForUpdate(List.of(requesterParticipantId, targetParticipantId))
+                .stream()
+                .filter(r -> !r.getId().equals(swapId))
+                .toList();
+        others.forEach(r -> r.supersede(now));
+        positionSwapRequestRepository.saveAll(others);
+
+        User requesterUser = userRepository.findById(requester.getUserId())
+                .orElseThrow(() -> new IllegalStateException("User not found"));
+        User targetUser = userRepository.findById(target.getUserId())
+                .orElseThrow(() -> new IllegalStateException("User not found"));
+
+        return swapMapper.toSummary(request, userMapper.toSummary(requesterUser), userMapper.toSummary(targetUser));
     }
 
-    boolean violatesVeteranPrecedence(boolean callerVeteran, boolean targetVeteran,
+    static boolean violatesVeteranPrecedence(boolean callerVeteran, boolean targetVeteran,
                                        int callerPosition, int targetPosition) {
         if (callerVeteran == targetVeteran)
             return false;
@@ -189,7 +268,7 @@ public class SwapService {
     }
 
     private PositionSwapRequest pendingSwapOrThrow(UUID swapId) {
-        PositionSwapRequest swap = positionSwapRequestRepository.findById(swapId)
+        PositionSwapRequest swap = positionSwapRequestRepository.findByIdForUpdate(swapId)
                 .orElseThrow(SwapRequestNotFoundException::new);
         if (swap.getStatus() != SwapStatus.PENDING)
             throw new SwapRequestNotPendingException();

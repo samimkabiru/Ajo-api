@@ -248,6 +248,11 @@ A participant who misses a month's contribution stays ACTIVE — this is not an 
 Later slices depend on earlier ones. Do not build ahead of the current
 slice.
 
+- **The lock protocol:** cycles before swap-request rows, cycles in id order, and a cycle's lock guards its beneficiary's position
+- **Clear before locking:** after `entityManager.clear()`, never use an entity loaded before it — only ids cross that line
+- `noRollbackFor` on `SwapRequestStaleException`: safe only because it's thrown before any exchange write
+- Pure rules are static — like `violatesVeteranPrecedence` — so they can be tested without constructing a service
+
 ## Out of scope
 
 Deliberately excluded — do not add these:
