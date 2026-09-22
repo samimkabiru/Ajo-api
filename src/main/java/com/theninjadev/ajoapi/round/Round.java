@@ -67,4 +67,9 @@ public class Round {
         this.activatedAt = activatedAt;
         this.updatedAt = activatedAt;
     }
+
+    public void complete(Instant completedAt) {
+        this.status = RoundStatus.COMPLETED;
+        this.updatedAt = completedAt;
+    }
 }

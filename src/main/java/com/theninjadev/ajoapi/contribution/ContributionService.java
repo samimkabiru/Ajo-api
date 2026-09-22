@@ -6,6 +6,7 @@ import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.auth.UserSummary;
 import com.theninjadev.ajoapi.group.*;
 import com.theninjadev.ajoapi.ledger.*;
+import com.theninjadev.ajoapi.ledger.IdempotencyKeyReusedException;
 import com.theninjadev.ajoapi.round.*;
 
 import java.time.Clock;
@@ -82,7 +83,7 @@ public class ContributionService {
     @Transactional
     public ContributionSummary contribute(UUID callerId, UUID cycleId,
                                           ContributeRequest request, String idempotencyKey) {
-        if (idempotencyKey == null)
+        if (idempotencyKey == null || idempotencyKey.isBlank())
             throw new MissingIdempotencyKeyException();
 
         Cycle cycle = cycleRepository.findById(cycleId).orElseThrow(CycleNotFoundException::new);
@@ -90,11 +91,11 @@ public class ContributionService {
 
         requireGroupMembership(round.getGroupId(), callerId);
 
-        if (round.getStatus() != RoundStatus.ACTIVE)
-            throw new RoundNotActiveException();
-
         Contribution existingContribution = contributionRepository.findByIdempotencyKey(idempotencyKey).orElse(null);
         if (existingContribution != null) {
+            if (!existingContribution.getCycleId().equals(cycleId))
+                throw new IdempotencyKeyReusedException();
+
             RoundParticipant targetParticipant = roundParticipantRepository
                     .findById(existingContribution.getParticipantId())
                     .orElseThrow(() -> new IllegalStateException("Participant not found"));
@@ -106,6 +107,8 @@ public class ContributionService {
             return contributionMapper.toSummary(existingContribution, userMapper.toSummary(user));
         }
 
+        if (round.getStatus() != RoundStatus.ACTIVE)
+            throw new RoundNotActiveException();
 
         UUID targetUserId;
         if (request.userId() == null || request.userId().equals(callerId)) {

@@ -54,4 +54,8 @@ public class Cycle {
     public void open() {
         this.status = CycleStatus.OPEN;
     }
+
+    public void markPaid() {
+        this.status = CycleStatus.PAID;
+    }
 }

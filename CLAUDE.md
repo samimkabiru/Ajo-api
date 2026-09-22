@@ -228,6 +228,10 @@ A participant who misses a month's contribution stays ACTIVE — this is not an 
 - The two-layer idempotency approach and why the catch throws rather than returning
 - The missed-contribution rules we discussed — shortfall claims, participant stays ACTIVE, arrears netted against their payout
 
+- Idempotency checks sit before round-status guards, and why (the final-payout retry)
+- A reused key against a different cycle is a 409, not a silent return
+- Payout amounts are never client-supplied
+
 ## Slice order
 
 1. ~~Ledger schema + `LedgerService.post()` + tests~~ — done

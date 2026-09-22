@@ -15,6 +15,8 @@ import com.theninjadev.ajoapi.group.InsufficientRoleException;
 import com.theninjadev.ajoapi.group.InviteNotFoundException;
 import com.theninjadev.ajoapi.group.InviteNotPendingException;
 import com.theninjadev.ajoapi.group.NotGroupMemberException;
+import com.theninjadev.ajoapi.ledger.IdempotencyKeyReusedException;
+import com.theninjadev.ajoapi.payout.*;
 import com.theninjadev.ajoapi.round.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -173,6 +175,41 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MissingIdempotencyKeyException.class)
     public ProblemDetail handleMissingIdempotencyKey(MissingIdempotencyKeyException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(PayoutNotFoundException.class)
+    public ProblemDetail handlePayoutNotFound(PayoutNotFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(CycleAlreadyPaidOutException.class)
+    public ProblemDetail handleCycleAlreadyPaidOut(CycleAlreadyPaidOutException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(PayoutNotYetDueException.class)
+    public ProblemDetail handlePayoutNotYetDue(PayoutNotYetDueException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(CycleHasNoBeneficiaryException.class)
+    public ProblemDetail handleCycleHasNoBeneficiary(CycleHasNoBeneficiaryException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(EmptyPoolException.class)
+    public ProblemDetail handleEmptyPool(EmptyPoolException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(NotCycleBeneficiaryException.class)
+    public ProblemDetail handleNotCycleBeneficiary(NotCycleBeneficiaryException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, e.getMessage());
+    }
+
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    public ProblemDetail handleIdempotencyKeyReused(IdempotencyKeyReusedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
