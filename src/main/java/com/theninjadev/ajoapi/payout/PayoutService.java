@@ -22,6 +22,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+
+import com.theninjadev.ajoapi.swap.PositionSwapRequestRepository;
 import lombok.AllArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -43,6 +45,7 @@ public class PayoutService {
     private final LedgerService ledgerService;
     private final LedgerAccountRepository ledgerAccountRepository;
     private final Clock clock;
+    private final PositionSwapRequestRepository swapRequestRepository;
 
     public List<PayoutSummary> listForRound(UUID callerId, UUID roundId) {
         Round round = getRoundOrThrow(roundId);
@@ -106,7 +109,9 @@ public class PayoutService {
         if (idempotencyKey == null || idempotencyKey.isBlank())
             throw new MissingIdempotencyKeyException();
 
-        Cycle cycle = cycleRepository.findById(cycleId).orElseThrow(CycleNotFoundException::new);
+        Cycle cycle = cycleRepository.findAllByIdForUpdate(List.of(cycleId)).stream()
+                .findFirst()
+                .orElseThrow(CycleNotFoundException::new);
         Round round = getRoundOrThrow(cycle.getRoundId());
         requireGroupMembership(round.getGroupId(), callerId);
 
@@ -146,6 +151,9 @@ public class PayoutService {
         RoundParticipant beneficiary = roundParticipantRepository
                 .findById(cycle.getBeneficiaryId())
                 .orElseThrow(() -> new IllegalStateException("Cycle beneficiary not found"));
+
+        if (!beneficiary.getUserId().equals(request.expectedBeneficiaryUserId()))
+            throw new BeneficiaryChangedException();
 
         if (!beneficiary.getUserId().equals(callerId)) {
             GroupMember caller = groupMemberRepository
@@ -208,6 +216,10 @@ public class PayoutService {
 
         cycle.markPaid();
         cycleRepository.save(cycle);
+
+        var stale = swapRequestRepository.findPendingInvolving(List.of(beneficiary.getId()));
+        stale.forEach(rq -> rq.supersede(now));
+        swapRequestRepository.saveAll(stale);
 
         boolean allPaid = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.getId())
                 .stream()

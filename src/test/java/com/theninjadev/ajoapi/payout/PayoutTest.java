@@ -24,6 +24,10 @@ import com.theninjadev.ajoapi.round.RoundDetail;
 import com.theninjadev.ajoapi.round.RoundRepository;
 import com.theninjadev.ajoapi.round.RoundStatus;
 import com.theninjadev.ajoapi.round.RoundSummary;
+import com.theninjadev.ajoapi.swap.CreateSwapRequest;
+import com.theninjadev.ajoapi.swap.PositionSwapRequestRepository;
+import com.theninjadev.ajoapi.swap.SwapRequestSummary;
+import com.theninjadev.ajoapi.swap.SwapStatus;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -66,6 +70,7 @@ class PayoutTest extends AbstractIntegrationTest {
     @Autowired private ContributionRepository contributionRepository;
     @Autowired private LedgerAccountRepository ledgerAccountRepository;
     @Autowired private LedgerEntryRepository ledgerEntryRepository;
+    @Autowired private PositionSwapRequestRepository swapRequestRepository;
 
     private record TestUser(UUID id, String phone, String accessToken) {}
 
@@ -88,6 +93,12 @@ class PayoutTest extends AbstractIntegrationTest {
                     .findFirst()
                     .orElseThrow();
         }
+
+        List<TestUser> membersOtherThan(TestUser user) {
+            return members.stream()
+                    .filter(m -> !m.id().equals(user.id()))
+                    .toList();
+        }
     }
 
     // Structural
@@ -99,7 +110,7 @@ class PayoutTest extends AbstractIntegrationTest {
         var beneficiary = f.beneficiaryOf(cycle);
 
         contributeAll(f, cycle);
-        var payout = payout(beneficiary, cycle.getId(), newKey());
+        var payout = payout(beneficiary, cycle.getId(), beneficiary.id(), newKey());
 
         assertThat(payout.expectedAmountKobo()).isEqualTo(FULL_POT);
         assertThat(payout.actualAmountKobo()).isEqualTo(FULL_POT);
@@ -113,7 +124,7 @@ class PayoutTest extends AbstractIntegrationTest {
         var cycle = f.cycles().getFirst();
 
         contributeAll(f, cycle);
-        var payout = payout(f.admin(), cycle.getId(), newKey());
+        var payout = payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
 
         var entries = ledgerEntryRepository.findByTransactionId(payout.ledgerTransactionId());
 
@@ -135,7 +146,7 @@ class PayoutTest extends AbstractIntegrationTest {
         contributeAll(f, cycle);
         assertThat(poolBalance(f.roundId())).isEqualTo(-FULL_POT);    // liability before payout
 
-        payout(f.admin(), cycle.getId(), newKey());
+        payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
 
         assertThat(poolBalance(f.roundId())).isZero();
     }
@@ -146,7 +157,7 @@ class PayoutTest extends AbstractIntegrationTest {
         var cycle = f.cycles().getFirst();
 
         contributeAll(f, cycle);
-        payout(f.admin(), cycle.getId(), newKey());
+        payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
 
         var reloaded = cycleRepository.findById(cycle.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(CycleStatus.PAID);
@@ -163,7 +174,7 @@ class PayoutTest extends AbstractIntegrationTest {
         contribute(f.admin(), cycle.getId(), newKey());
         contribute(f.ada(), cycle.getId(), newKey());
 
-        var payout = payout(f.admin(), cycle.getId(), newKey());
+        var payout = payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
 
         assertThat(payout.expectedAmountKobo()).isEqualTo(FULL_POT);
         assertThat(payout.actualAmountKobo()).isEqualTo(2 * AMOUNT);
@@ -178,7 +189,7 @@ class PayoutTest extends AbstractIntegrationTest {
 
         contribute(f.admin(), cycle.getId(), newKey());
         contribute(f.ada(), cycle.getId(), newKey());
-        payout(f.admin(), cycle.getId(), newKey());
+        payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
 
         var claim = shortfallClaimRepository.findByCycleId(cycle.getId()).orElseThrow();
 
@@ -193,7 +204,7 @@ class PayoutTest extends AbstractIntegrationTest {
         var cycle = f.cycles().getFirst();
 
         contributeAll(f, cycle);
-        payout(f.admin(), cycle.getId(), newKey());
+        payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
 
         assertThat(shortfallClaimRepository.findByCycleId(cycle.getId())).isEmpty();
     }
@@ -203,16 +214,14 @@ class PayoutTest extends AbstractIntegrationTest {
         var f = setUp(PAST_START);
         var cycle = f.cycles().getFirst();
 
-        payoutAndExpect(f.admin(), cycle.getId(), newKey(), 409);
+        payoutAndExpect(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey(), 409);
 
         assertThat(payoutRepository.findByCycleId(cycle.getId())).isEmpty();
         var reloaded = cycleRepository.findById(cycle.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isNotEqualTo(CycleStatus.PAID);
     }
 
-    
     // Lifecycle
-    
 
     @Test
     void finalPayoutCompletesTheRound() throws Exception {
@@ -230,7 +239,7 @@ class PayoutTest extends AbstractIntegrationTest {
         var cycle = f.cycles().getFirst();
 
         contributeAll(f, cycle);
-        payout(f.admin(), cycle.getId(), newKey());
+        payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
 
         var round = roundRepository.findById(f.roundId()).orElseThrow();
         assertThat(round.getStatus()).isEqualTo(RoundStatus.ACTIVE);
@@ -246,16 +255,17 @@ class PayoutTest extends AbstractIntegrationTest {
     }
 
     // Idempotency
-    
+
     @Test
     void sameKeyTwiceCreatesOnePayoutAndOnePosting() throws Exception {
         var f = setUp(PAST_START);
         var cycle = f.cycles().getFirst();
+        var expected = f.beneficiaryOf(cycle).id();
         var key = newKey();
 
         contributeAll(f, cycle);
-        var first = payout(f.admin(), cycle.getId(), key);
-        var second = payout(f.admin(), cycle.getId(), key);
+        var first = payout(f.admin(), cycle.getId(), expected, key);
+        var second = payout(f.admin(), cycle.getId(), expected, key);
 
         assertThat(second.id()).isEqualTo(first.id());
         assertThat(second.ledgerTransactionId()).isEqualTo(first.ledgerTransactionId());
@@ -273,7 +283,8 @@ class PayoutTest extends AbstractIntegrationTest {
         var lastCycle = f.cycles().getLast();
         var lastPayout = payouts.getLast();
 
-        var retried = payout(f.admin(), lastCycle.getId(), lastPayout.idempotencyKey());
+        var retried = payout(f.admin(), lastCycle.getId(),
+                f.beneficiaryOf(lastCycle).id(), lastPayout.idempotencyKey());
 
         assertThat(retried.id()).isEqualTo(lastPayout.summary().id());
     }
@@ -286,20 +297,21 @@ class PayoutTest extends AbstractIntegrationTest {
         var key = newKey();
 
         contributeAll(f, first);
-        payout(f.admin(), first.getId(), key);
+        payout(f.admin(), first.getId(), f.beneficiaryOf(first).id(), key);
 
-        payoutAndExpect(f.admin(), second.getId(), key, 409);
+        payoutAndExpect(f.admin(), second.getId(), f.beneficiaryOf(second).id(), key, 409);
     }
 
     @Test
     void payingOutTheSameCycleTwiceIsRejected() throws Exception {
         var f = setUp(PAST_START);
         var cycle = f.cycles().getFirst();
+        var expected = f.beneficiaryOf(cycle).id();
 
         contributeAll(f, cycle);
-        payout(f.admin(), cycle.getId(), newKey());
+        payout(f.admin(), cycle.getId(), expected, newKey());
 
-        payoutAndExpect(f.admin(), cycle.getId(), newKey(), 409);
+        payoutAndExpect(f.admin(), cycle.getId(), expected, newKey(), 409);
     }
 
     // Authorization and timing
@@ -311,7 +323,7 @@ class PayoutTest extends AbstractIntegrationTest {
 
         contributeAll(f, cycle);
 
-        payoutAndExpect(f.ada(), cycle.getId(), newKey(), 403);
+        payoutAndExpect(f.ada(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey(), 403);
     }
 
     @Test
@@ -323,7 +335,7 @@ class PayoutTest extends AbstractIntegrationTest {
         var beneficiary = f.beneficiaryOf(cycle);
 
         contributeAll(f, cycle);
-        var payout = payout(f.admin(), cycle.getId(), newKey());
+        var payout = payout(f.admin(), cycle.getId(), beneficiary.id(), newKey());
 
         assertThat(payout.recordedBy()).isEqualTo(f.admin().id());
         assertThat(payout.beneficiary().id()).isEqualTo(beneficiary.id());
@@ -335,7 +347,59 @@ class PayoutTest extends AbstractIntegrationTest {
         var f = setUp(LocalDate.now().plusMonths(6).withDayOfMonth(28));
         var cycle = f.cycles().getFirst();
 
-        payoutAndExpect(f.admin(), cycle.getId(), newKey(), 409);
+        payoutAndExpect(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey(), 409);
+    }
+
+    // Confirming who is being paid
+
+    @Test
+    void payoutWithAStaleExpectedBeneficiaryIsRejectedAndWritesNothing() throws Exception {
+        // The admin believes they are paying someone who is not this cycle's beneficiary —
+        // exactly what they would see if a swap had moved the cycle since they loaded it.
+        var f = setUp(PAST_START);
+        var cycle = f.cycles().getFirst();
+        var notTheBeneficiary = f.membersOtherThan(f.beneficiaryOf(cycle)).getFirst();
+
+        contributeAll(f, cycle);
+
+        payoutAndExpect(f.admin(), cycle.getId(), notTheBeneficiary.id(), newKey(), 409);
+
+        assertThat(payoutRepository.findByCycleId(cycle.getId())).isEmpty();
+        assertThat(poolBalance(f.roundId())).isEqualTo(-FULL_POT);    // pool untouched
+    }
+
+    @Test
+    void payoutWithoutAnExpectedBeneficiaryIsRejected() throws Exception {
+        var f = setUp(PAST_START);
+        var cycle = f.cycles().getFirst();
+
+        contributeAll(f, cycle);
+
+        payoutAndExpect(f.admin(), cycle.getId(), null, newKey(), 400);
+    }
+
+    // Swap supersession
+
+    @Test
+    void payoutSupersedesPendingSwapsInvolvingTheBeneficiaryOnly() throws Exception {
+        var f = setUp(PAST_START);
+        var cycle = f.cycles().getFirst();
+        var paid = f.beneficiaryOf(cycle);
+
+        var others = f.membersOtherThan(paid);
+        var b = others.get(0);
+        var c = others.get(1);
+
+        var outgoing  = requestSwap(paid, f.roundId(), c);   // made by the beneficiary
+        var incoming  = requestSwap(b, f.roundId(), paid);   // sent to the beneficiary
+        var unrelated = requestSwap(c, f.roundId(), b);      // does not involve them at all
+
+        contributeAll(f, cycle);
+        payout(f.admin(), cycle.getId(), paid.id(), newKey());
+
+        assertThat(swapStatus(outgoing.id())).isEqualTo(SwapStatus.SUPERSEDED);
+        assertThat(swapStatus(incoming.id())).isEqualTo(SwapStatus.SUPERSEDED);
+        assertThat(swapStatus(unrelated.id())).isEqualTo(SwapStatus.PENDING);
     }
 
     // The invariant
@@ -369,9 +433,7 @@ class PayoutTest extends AbstractIntegrationTest {
                 .isEqualTo(cashBefore);
     }
 
-    
     // Round-level helpers
-    
 
     private record RecordedPayout(PayoutSummary summary, String idempotencyKey) {}
 
@@ -381,7 +443,8 @@ class PayoutTest extends AbstractIntegrationTest {
         for (Cycle cycle : f.cycles()) {
             contributeAll(f, cycle);
             String key = newKey();
-            payouts.add(new RecordedPayout(payout(f.admin(), cycle.getId(), key), key));
+            var summary = payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), key);
+            payouts.add(new RecordedPayout(summary, key));
         }
         return payouts;
     }
@@ -399,29 +462,37 @@ class PayoutTest extends AbstractIntegrationTest {
         return ledgerEntryRepository.sumAmountKoboByAccountId(pool.getId());
     }
 
+    private SwapStatus swapStatus(UUID swapId) {
+        return swapRequestRepository.findById(swapId).orElseThrow().getStatus();
+    }
+
     private static String newKey() {
         return UUID.randomUUID().toString();
     }
 
-    // HTTP helpers — payouts and contributions
-    
-    private PayoutSummary payout(TestUser caller, UUID cycleId, String key) throws Exception {
+    // HTTP helpers — payouts, contributions, swaps
+
+    private PayoutSummary payout(TestUser caller, UUID cycleId,
+                                 UUID expectedBeneficiaryUserId, String key) throws Exception {
         var result = mockMvc.perform(post("/cycles/" + cycleId + "/payout")
                         .header("Authorization", "Bearer " + caller.accessToken())
                         .header("Idempotency-Key", key)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new PayoutRequest(PayoutMethod.ONLINE))))
+                        .content(objectMapper.writeValueAsString(
+                                new PayoutRequest(PayoutMethod.ONLINE, expectedBeneficiaryUserId))))
                 .andExpect(status().isCreated())
                 .andReturn();
         return objectMapper.readValue(result.getResponse().getContentAsString(), PayoutSummary.class);
     }
 
-    private void payoutAndExpect(TestUser caller, UUID cycleId, String key, int expectedStatus) throws Exception {
+    private void payoutAndExpect(TestUser caller, UUID cycleId, UUID expectedBeneficiaryUserId,
+                                 String key, int expectedStatus) throws Exception {
         mockMvc.perform(post("/cycles/" + cycleId + "/payout")
                         .header("Authorization", "Bearer " + caller.accessToken())
                         .header("Idempotency-Key", key)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new PayoutRequest(PayoutMethod.ONLINE))))
+                        .content(objectMapper.writeValueAsString(
+                                new PayoutRequest(PayoutMethod.ONLINE, expectedBeneficiaryUserId))))
                 .andExpect(status().is(expectedStatus));
     }
 
@@ -445,8 +516,18 @@ class PayoutTest extends AbstractIntegrationTest {
                 .andExpect(status().is(expectedStatus));
     }
 
+    private SwapRequestSummary requestSwap(TestUser requester, UUID roundId, TestUser target) throws Exception {
+        var result = mockMvc.perform(post("/rounds/" + roundId + "/swaps")
+                        .header("Authorization", "Bearer " + requester.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateSwapRequest(target.id()))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readValue(result.getResponse().getContentAsString(), SwapRequestSummary.class);
+    }
+
     // Setup — three members, one round, activated
-    
+
     private Fixture setUp(LocalDate firstPayoutDate) throws Exception {
         var admin = registerUser("Alice");
         var ada = registerUser("Ada");

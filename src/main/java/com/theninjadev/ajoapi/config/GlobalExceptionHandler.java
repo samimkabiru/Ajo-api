@@ -18,6 +18,7 @@ import com.theninjadev.ajoapi.group.NotGroupMemberException;
 import com.theninjadev.ajoapi.ledger.IdempotencyKeyReusedException;
 import com.theninjadev.ajoapi.payout.*;
 import com.theninjadev.ajoapi.round.*;
+import com.theninjadev.ajoapi.swap.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -209,6 +210,66 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IdempotencyKeyReusedException.class)
     public ProblemDetail handleIdempotencyKeyReused(IdempotencyKeyReusedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(SwapRequestNotFoundException.class)
+    public ProblemDetail handleSwapRequestNotFound(SwapRequestNotFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(SwapRequestNotPendingException.class)
+    public ProblemDetail handleSwapRequestNotPending(SwapRequestNotPendingException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(NotSwapTargetException.class)
+    public ProblemDetail handleNotSwapTarget(NotSwapTargetException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, e.getMessage());
+    }
+
+    @ExceptionHandler(NotSwapRequesterException.class)
+    public ProblemDetail handleNotSwapRequester(NotSwapRequesterException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, e.getMessage());
+    }
+
+    @ExceptionHandler(CannotSwapWithSelfException.class)
+    public ProblemDetail handleCannotSwapWithSelf(CannotSwapWithSelfException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(ParticipantNotActiveException.class)
+    public ProblemDetail handleParticipantNotActive(ParticipantNotActiveException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(RequesterAlreadyPaidOutException.class)
+    public ProblemDetail handleRequesterAlreadyPaidOut(RequesterAlreadyPaidOutException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(TargetAlreadyPaidOutException.class)
+    public ProblemDetail handleTargetAlreadyPaidOut(TargetAlreadyPaidOutException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(OutgoingSwapAlreadyPendingException.class)
+    public ProblemDetail handleOutgoingSwapAlreadyPending(OutgoingSwapAlreadyPendingException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(NewcomerCannotMoveAheadOfVeteranException.class)
+    public ProblemDetail handleNewcomerCannotMoveAheadOfVeteran(NewcomerCannotMoveAheadOfVeteranException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(SwapRequestStaleException.class)
+    public ProblemDetail handleSwapRequestStale(SwapRequestStaleException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(BeneficiaryChangedException.class)
+    public ProblemDetail handleBeneficiaryChanged(BeneficiaryChangedException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 

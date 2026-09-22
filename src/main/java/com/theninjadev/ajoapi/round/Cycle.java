@@ -58,4 +58,8 @@ public class Cycle {
     public void markPaid() {
         this.status = CycleStatus.PAID;
     }
+
+    public void reassignBeneficiary(UUID participantId) {
+        this.beneficiaryId = participantId;
+    }
 }
