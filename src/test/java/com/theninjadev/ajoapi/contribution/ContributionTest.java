@@ -1,14 +1,11 @@
 package com.theninjadev.ajoapi.contribution;
 
-import com.theninjadev.ajoapi.auth.AuthResponse;
-import com.theninjadev.ajoapi.auth.RegisterRequest;
-import com.theninjadev.ajoapi.group.CreateGroupRequest;
-import com.theninjadev.ajoapi.group.GroupInviteSummary;
-import com.theninjadev.ajoapi.group.GroupSummary;
-import com.theninjadev.ajoapi.group.InviteMemberRequest;
 import com.theninjadev.ajoapi.ledger.*;
 import com.theninjadev.ajoapi.round.*;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
+import com.theninjadev.ajoapi.testsupport.ApiTestClient;
+import com.theninjadev.ajoapi.testsupport.TestUser;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -43,21 +40,27 @@ public class ContributionTest extends AbstractIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    private ApiTestClient client;
+
+    @BeforeEach
+    void setUpClient() {
+        client = new ApiTestClient(mockMvc, objectMapper);
+    }
+
     @Autowired
     private CycleRepository cycleRepository;
 
-    private record TestUser(UUID id, String phone, String accessToken) {}
     private record PreparedRound(UUID roundId, TestUser admin, TestUser ada, TestUser eze) {}
 
     // Structure tests
     @Test
     void oneContributionPostsTwoLedgerEntriesSummingToZero() throws Exception {
-        var round = setUpRound("08198723", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycles = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId);
 
-        var summary = contribute(round.ada, cycles.getFirst().getId(), 1000000L, round.ada.id(), UUID.randomUUID().toString());
+        var summary = client.contribute(round.ada, cycles.getFirst().getId(), 1000000L, round.ada.id(), UUID.randomUUID().toString());
         var entries = ledgerEntryRepository.findByTransactionId(summary.ledgerTransactionId());
         assertThat(entries).hasSize(2);
         assertThat(entries.stream().mapToLong(LedgerEntry::getAmountKobo).sum()).isEqualTo(0L);
@@ -65,30 +68,30 @@ public class ContributionTest extends AbstractIntegrationTest {
 
     @Test
     void poolBalanceReflectsAllContributions() throws Exception {
-        var round = setUpRound("08198724", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
         var pool = ledgerAccountRepository
                 .findByAccountTypeAndOwnerId(AccountType.ROUND_POOL, round.roundId)
                 .orElseThrow();
 
-        contribute(round.admin, cycleId, 1000000L, round.admin.id(), UUID.randomUUID().toString());
-        contribute(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString());
-        contribute(round.eze, cycleId, 1000000L, round.eze.id(), UUID.randomUUID().toString());
+        client.contribute(round.admin, cycleId, 1000000L, round.admin.id(), UUID.randomUUID().toString());
+        client.contribute(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString());
+        client.contribute(round.eze, cycleId, 1000000L, round.eze.id(), UUID.randomUUID().toString());
 
         assertThat(ledgerEntryRepository.sumAmountKoboByAccountId(pool.getId())).isEqualTo(-3000000L);
     }
 
     @Test
     void platformCashIncreasesByContributionAmount() throws Exception {
-        var round = setUpRound("08198725", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
 
         long before = ledgerEntryRepository.sumAmountKoboByAccountId(LedgerAccounts.PLATFORM_CASH_ID);
-        contribute(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString());
+        client.contribute(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString());
 
         assertThat(ledgerEntryRepository.sumAmountKoboByAccountId(LedgerAccounts.PLATFORM_CASH_ID))
                 .isEqualTo(before + 1000000L);
@@ -97,14 +100,14 @@ public class ContributionTest extends AbstractIntegrationTest {
     // Idempotency tests
     @Test
     void sameIdempotencyKeyCreatesOneContributionAndOnePosting() throws Exception {
-        var round = setUpRound("08198726", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
         var key = UUID.randomUUID().toString();
 
-        var first = contribute(round.ada, cycleId, 1000000L, round.ada.id(), key);
-        var second = contribute(round.ada, cycleId, 1000000L, round.ada.id(), key);
+        var first = client.contribute(round.ada, cycleId, 1000000L, round.ada.id(), key);
+        var second = client.contribute(round.ada, cycleId, 1000000L, round.ada.id(), key);
 
         assertThat(second.id()).isEqualTo(first.id());
         assertThat(second.ledgerTransactionId()).isEqualTo(first.ledgerTransactionId());
@@ -114,19 +117,19 @@ public class ContributionTest extends AbstractIntegrationTest {
 
     @Test
     void differentKeysForSameCycleAndParticipantIsRejected() throws Exception {
-        var round = setUpRound("08198727", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
 
-        contribute(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString());
-        contributeAndExpect(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString(), 409);
+        client.contribute(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString());
+        client.contributeAndExpect(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString(), 409);
     }
 
     @Test
     void missingIdempotencyKeyIsRejected() throws Exception {
-        var round = setUpRound("08198728", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
         var request = new ContributeRequest(1000000L, round.ada.id(), null);
@@ -141,20 +144,20 @@ public class ContributionTest extends AbstractIntegrationTest {
     // Validation
     @Test
     void wrongAmountIsRejected() throws Exception {
-        var round = setUpRound("08198729", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
-        contributeAndExpect(round.ada, cycleId, 500000L, round.ada.id(), UUID.randomUUID().toString(), 400);
+        client.contributeAndExpect(round.ada, cycleId, 500000L, round.ada.id(), UUID.randomUUID().toString(), 400);
     }
 
     @Test
     void contributingBeforeCycleOpensIsRejected() throws Exception {
-        var round = setUpRound("08198730", LocalDate.now().plusMonths(6).withDayOfMonth(28));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.now().plusMonths(6).withDayOfMonth(28));
+        client.activate(round.admin, round.roundId);
 
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
-        contributeAndExpect(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString(), 409);
+        client.contributeAndExpect(round.ada, cycleId, 1000000L, round.ada.id(), UUID.randomUUID().toString(), 409);
     }
 
     // RoundNotActiveException is unreachable through the API for now — cycles only
@@ -163,17 +166,17 @@ public class ContributionTest extends AbstractIntegrationTest {
 
     @Test
     void nonAdminCannotContributeForSomeoneElse() throws Exception {
-        var round = setUpRound("08198733", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
-        contributeAndExpect(round.ada, cycleId, 1000000L, round.eze.id(), UUID.randomUUID().toString(), 403);
+        client.contributeAndExpect(round.ada, cycleId, 1000000L, round.eze.id(), UUID.randomUUID().toString(), 403);
     }
 
     @Test
     void adminCanRecordCashContributionForAnotherMember() throws Exception {
-        var round = setUpRound("08198734", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
         var request = new ContributeRequest(1000000L, round.ada.id(), ContributionMethod.CASH);
@@ -196,25 +199,25 @@ public class ContributionTest extends AbstractIntegrationTest {
 
     @Test
     void nonGroupMemberCannotContribute() throws Exception {
-        var round = setUpRound("08198735", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
-        var outsider = registerUser("08198736001", "Outsider");
+        var outsider = client.registerUser("Outsider");
         var cycleId = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst().getId();
 
-        contributeAndExpect(outsider, cycleId, 1000000L, outsider.id(), UUID.randomUUID().toString(), 404);
+        client.contributeAndExpect(outsider, cycleId, 1000000L, outsider.id(), UUID.randomUUID().toString(), 404);
     }
 
     // Behaviour
     @Test
     void firstContributionOpensTheCycle() throws Exception {
-        var round = setUpRound("08198737", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycle = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst();
         assertThat(cycle.getStatus()).isEqualTo(CycleStatus.SCHEDULED);
 
-        contribute(round.ada, cycle.getId(), 1000000L, round.ada.id(), UUID.randomUUID().toString());
+        client.contribute(round.ada, cycle.getId(), 1000000L, round.ada.id(), UUID.randomUUID().toString());
 
         var reloaded = cycleRepository.findById(cycle.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(CycleStatus.OPEN);
@@ -222,13 +225,13 @@ public class ContributionTest extends AbstractIntegrationTest {
 
     @Test
     void rejectedContributionWritesNothing() throws Exception {
-        var round = setUpRound("08198738", LocalDate.of(2026, 3, 31));
-        activate(round.admin, round.roundId);
+        var round = setUpRound(LocalDate.of(2026, 3, 31));
+        client.activate(round.admin, round.roundId);
 
         var cycle = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.roundId).getFirst();
         long entriesBefore = ledgerEntryRepository.count();
 
-        contributeAndExpect(round.ada, cycle.getId(), 500000L, round.ada.id(),
+        client.contributeAndExpect(round.ada, cycle.getId(), 500000L, round.ada.id(),
                 UUID.randomUUID().toString(), 400);
 
         assertThat(contributionRepository.findByCycleId(cycle.getId())).isEmpty();
@@ -238,115 +241,20 @@ public class ContributionTest extends AbstractIntegrationTest {
         assertThat(reloaded.getStatus()).isEqualTo(CycleStatus.SCHEDULED);
     }
 
-    private ContributionSummary contribute(TestUser caller, UUID cycleId, long amountKobo,
-                                           UUID targetUserId, String idempotencyKey) throws Exception {
-        var request = new ContributeRequest(amountKobo, targetUserId, null);
-        var result = mockMvc.perform(post("/cycles/" + cycleId + "/contributions")
-                        .header("Authorization", "Bearer " + caller.accessToken())
-                        .header("Idempotency-Key", idempotencyKey)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), ContributionSummary.class);
-    }
+    private PreparedRound setUpRound(LocalDate firstPayoutDate) throws Exception {
+        var admin = client.registerUser("Alice");
+        var ada   = client.registerUser("Ada");
+        var eze   = client.registerUser("Eze");
 
-    private void contributeAndExpect(TestUser caller, UUID cycleId, long amountKobo,
-                                           UUID targetUserId, String idempotencyKey, int expectedStatus) throws Exception {
-        var request = new ContributeRequest(amountKobo, targetUserId, null);
-        mockMvc.perform(post("/cycles/" + cycleId + "/contributions")
-                        .header("Authorization", "Bearer " + caller.accessToken())
-                        .header("Idempotency-Key", idempotencyKey)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().is(expectedStatus));
-    }
+        var groupId = client.createGroup(admin, "Alice's Ajo");
+        client.addToGroup(admin, groupId, ada);
+        client.addToGroup(admin, groupId, eze);
 
-    private PreparedRound setUpRound(String phonePrefix, LocalDate firstPayoutDate) throws Exception {
-        var admin = registerUser(phonePrefix + "001", "Alice");
-        var ada   = registerUser(phonePrefix + "002", "Ada");
-        var eze   = registerUser(phonePrefix + "003", "Eze");
-
-        var groupId = createGroup(admin, "Alice's Ajo");
-        addToGroup(admin, groupId, ada);
-        addToGroup(admin, groupId, eze);
-
-        var roundId = createRound(admin, groupId, 1000000L, firstPayoutDate);
-        addParticipant(admin, roundId, admin);
-        addParticipant(admin, roundId, ada);
-        addParticipant(admin, roundId, eze);
+        var roundId = client.createRound(admin, groupId, 1000000L, firstPayoutDate);
+        client.addParticipant(admin, roundId, admin);
+        client.addParticipant(admin, roundId, ada);
+        client.addParticipant(admin, roundId, eze);
 
         return new PreparedRound(roundId, admin, ada, eze);
-    }
-
-    private void addParticipant(TestUser admin, UUID roundId, TestUser participant) throws Exception {
-        var request = new AddParticipantRequest(participant.id());
-        mockMvc.perform(post("/rounds/" + roundId + "/participants")
-                        .header("Authorization", "Bearer " + admin.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated());
-    }
-
-    private RoundDetail activate(TestUser caller, UUID roundId) throws Exception {
-        var result = mockMvc.perform(post("/rounds/" + roundId + "/activate")
-                        .header("Authorization", "Bearer " + caller.accessToken()))
-                .andExpect(status().isOk())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), RoundDetail.class);
-    }
-
-    private TestUser registerUser(String rawPhone, String fullName) throws Exception {
-        var request = new RegisterRequest(rawPhone, "password123", fullName, null);
-        var result = mockMvc.perform(post("/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        AuthResponse response = objectMapper.readValue(
-                result.getResponse().getContentAsString(), AuthResponse.class);
-        return new TestUser(response.user().id(), response.user().phone(), response.accessToken());
-    }
-
-    private UUID createGroup(TestUser owner, String name) throws Exception {
-        var request = new CreateGroupRequest(name, "description");
-        var result = mockMvc.perform(post("/groups")
-                        .header("Authorization", "Bearer " + owner.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        GroupSummary summary = objectMapper.readValue(
-                result.getResponse().getContentAsString(), GroupSummary.class);
-        return summary.id();
-    }
-
-    private void addToGroup(TestUser admin, UUID groupId, TestUser invitee) throws Exception {
-        var request = new InviteMemberRequest(invitee.phone());
-        var result = mockMvc.perform(post("/groups/" + groupId + "/invites")
-                        .header("Authorization", "Bearer " + admin.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        GroupInviteSummary invite = objectMapper.readValue(
-                result.getResponse().getContentAsString(), GroupInviteSummary.class);
-
-        mockMvc.perform(post("/groups/invites/" + invite.id() + "/accept")
-                        .header("Authorization", "Bearer " + invitee.accessToken()))
-                .andExpect(status().isOk());
-    }
-
-    private UUID createRound(TestUser admin, UUID groupId, long amountKobo, LocalDate firstPayoutDate) throws Exception {
-        var request = new CreateRoundRequest(amountKobo, firstPayoutDate);
-        var result = mockMvc.perform(post("/groups/" + groupId + "/rounds")
-                        .header("Authorization", "Bearer " + admin.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        RoundSummary summary = objectMapper.readValue(
-                result.getResponse().getContentAsString(), RoundSummary.class);
-        return summary.id();
     }
 }

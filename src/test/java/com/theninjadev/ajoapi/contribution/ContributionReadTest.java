@@ -1,29 +1,20 @@
 package com.theninjadev.ajoapi.contribution;
 
-import com.theninjadev.ajoapi.auth.AuthResponse;
-import com.theninjadev.ajoapi.auth.RegisterRequest;
-import com.theninjadev.ajoapi.group.CreateGroupRequest;
-import com.theninjadev.ajoapi.group.GroupInviteSummary;
-import com.theninjadev.ajoapi.group.GroupSummary;
-import com.theninjadev.ajoapi.group.InviteMemberRequest;
-import com.theninjadev.ajoapi.round.AddParticipantRequest;
-import com.theninjadev.ajoapi.round.CreateRoundRequest;
-import com.theninjadev.ajoapi.round.RoundDetail;
-import com.theninjadev.ajoapi.round.RoundSummary;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
+import com.theninjadev.ajoapi.testsupport.ApiTestClient;
+import com.theninjadev.ajoapi.testsupport.TestUser;
 import java.time.LocalDate;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -36,13 +27,19 @@ class ContributionReadTest extends AbstractIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    private record TestUser(UUID id, String phone, String accessToken) {}
+    private ApiTestClient client;
+
+    @BeforeEach
+    void setUpClient() {
+        client = new ApiTestClient(mockMvc, objectMapper);
+    }
+
     private record ActivatedSetup(UUID roundId, UUID cycleId, TestUser admin, TestUser ada, TestUser eze) {}
 
     @Test
     void nonGroupMemberCannotListContributionsForCycle() throws Exception {
-        var setup = setUpActivatedRound("08061110");
-        var outsider = registerUser("08061119999", "Outsider");
+        var setup = setUpActivatedRound();
+        var outsider = client.registerUser("Outsider");
 
         mockMvc.perform(get("/cycles/" + setup.cycleId() + "/contributions")
                         .header("Authorization", "Bearer " + outsider.accessToken()))
@@ -51,7 +48,7 @@ class ContributionReadTest extends AbstractIntegrationTest {
 
     @Test
     void freshlyActivatedCycleHasNoContributions() throws Exception {
-        var setup = setUpActivatedRound("08062220");
+        var setup = setUpActivatedRound();
 
         var result = mockMvc.perform(get("/cycles/" + setup.cycleId() + "/contributions")
                         .header("Authorization", "Bearer " + setup.admin().accessToken()))
@@ -66,7 +63,7 @@ class ContributionReadTest extends AbstractIntegrationTest {
 
     @Test
     void poolBalanceIsZeroOnFreshlyActivatedRound() throws Exception {
-        var setup = setUpActivatedRound("08063330");
+        var setup = setUpActivatedRound();
 
         var result = mockMvc.perform(get("/rounds/" + setup.roundId() + "/pool-balance")
                         .header("Authorization", "Bearer " + setup.admin().accessToken()))
@@ -79,92 +76,21 @@ class ContributionReadTest extends AbstractIntegrationTest {
         assertThat(balance.balanceKobo()).isZero();
     }
 
-    private ActivatedSetup setUpActivatedRound(String phonePrefix) throws Exception {
-        var admin = registerUser(phonePrefix + "001", "Alice");
-        var ada = registerUser(phonePrefix + "002", "Ada");
-        var eze = registerUser(phonePrefix + "003", "Eze");
+    private ActivatedSetup setUpActivatedRound() throws Exception {
+        var admin = client.registerUser("Alice");
+        var ada = client.registerUser("Ada");
+        var eze = client.registerUser("Eze");
 
-        var groupId = createGroup(admin, "Alice's Ajo");
-        addToGroup(admin, groupId, ada);
-        addToGroup(admin, groupId, eze);
+        var groupId = client.createGroup(admin, "Alice's Ajo");
+        client.addToGroup(admin, groupId, ada);
+        client.addToGroup(admin, groupId, eze);
 
-        var roundId = createRound(admin, groupId, 1000000L, LocalDate.of(2026, 3, 31));
-        addParticipant(admin, roundId, admin);
-        addParticipant(admin, roundId, ada);
-        addParticipant(admin, roundId, eze);
+        var roundId = client.createRound(admin, groupId, 1000000L, LocalDate.of(2026, 3, 31));
+        client.addParticipant(admin, roundId, admin);
+        client.addParticipant(admin, roundId, ada);
+        client.addParticipant(admin, roundId, eze);
 
-        var detail = activate(admin, roundId);
+        var detail = client.activate(admin, roundId);
         return new ActivatedSetup(roundId, detail.cycles().get(0).id(), admin, ada, eze);
-    }
-
-    private void addParticipant(TestUser admin, UUID roundId, TestUser participant) throws Exception {
-        var request = new AddParticipantRequest(participant.id());
-        mockMvc.perform(post("/rounds/" + roundId + "/participants")
-                        .header("Authorization", "Bearer " + admin.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated());
-    }
-
-    private RoundDetail activate(TestUser caller, UUID roundId) throws Exception {
-        var result = mockMvc.perform(post("/rounds/" + roundId + "/activate")
-                        .header("Authorization", "Bearer " + caller.accessToken()))
-                .andExpect(status().isOk())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), RoundDetail.class);
-    }
-
-    private TestUser registerUser(String rawPhone, String fullName) throws Exception {
-        var request = new RegisterRequest(rawPhone, "password123", fullName, null);
-        var result = mockMvc.perform(post("/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        AuthResponse response = objectMapper.readValue(
-                result.getResponse().getContentAsString(), AuthResponse.class);
-        return new TestUser(response.user().id(), response.user().phone(), response.accessToken());
-    }
-
-    private UUID createGroup(TestUser owner, String name) throws Exception {
-        var request = new CreateGroupRequest(name, "description");
-        var result = mockMvc.perform(post("/groups")
-                        .header("Authorization", "Bearer " + owner.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        GroupSummary summary = objectMapper.readValue(
-                result.getResponse().getContentAsString(), GroupSummary.class);
-        return summary.id();
-    }
-
-    private void addToGroup(TestUser admin, UUID groupId, TestUser invitee) throws Exception {
-        var request = new InviteMemberRequest(invitee.phone());
-        var result = mockMvc.perform(post("/groups/" + groupId + "/invites")
-                        .header("Authorization", "Bearer " + admin.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        GroupInviteSummary invite = objectMapper.readValue(
-                result.getResponse().getContentAsString(), GroupInviteSummary.class);
-
-        mockMvc.perform(post("/groups/invites/" + invite.id() + "/accept")
-                        .header("Authorization", "Bearer " + invitee.accessToken()))
-                .andExpect(status().isOk());
-    }
-
-    private UUID createRound(TestUser admin, UUID groupId, long amountKobo, LocalDate firstPayoutDate) throws Exception {
-        var request = new CreateRoundRequest(amountKobo, firstPayoutDate);
-        var result = mockMvc.perform(post("/groups/" + groupId + "/rounds")
-                        .header("Authorization", "Bearer " + admin.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        RoundSummary summary = objectMapper.readValue(
-                result.getResponse().getContentAsString(), RoundSummary.class);
-        return summary.id();
     }
 }

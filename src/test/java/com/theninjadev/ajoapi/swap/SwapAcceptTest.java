@@ -1,33 +1,23 @@
 package com.theninjadev.ajoapi.swap;
 
-import com.theninjadev.ajoapi.auth.AuthResponse;
-import com.theninjadev.ajoapi.auth.RegisterRequest;
-import com.theninjadev.ajoapi.contribution.ContributeRequest;
 import com.theninjadev.ajoapi.contribution.Contribution;
 import com.theninjadev.ajoapi.contribution.ContributionRepository;
-import com.theninjadev.ajoapi.group.CreateGroupRequest;
-import com.theninjadev.ajoapi.group.GroupInviteSummary;
-import com.theninjadev.ajoapi.group.GroupSummary;
-import com.theninjadev.ajoapi.group.InviteMemberRequest;
 import com.theninjadev.ajoapi.payout.Payout;
-import com.theninjadev.ajoapi.payout.PayoutMethod;
 import com.theninjadev.ajoapi.payout.PayoutRepository;
-import com.theninjadev.ajoapi.payout.PayoutRequest;
-import com.theninjadev.ajoapi.round.AddParticipantRequest;
-import com.theninjadev.ajoapi.round.CreateRoundRequest;
 import com.theninjadev.ajoapi.round.Cycle;
 import com.theninjadev.ajoapi.round.CycleRepository;
 import com.theninjadev.ajoapi.round.ParticipantSummary;
 import com.theninjadev.ajoapi.round.RoundDetail;
 import com.theninjadev.ajoapi.round.RoundParticipant;
 import com.theninjadev.ajoapi.round.RoundParticipantRepository;
-import com.theninjadev.ajoapi.round.RoundSummary;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
+import com.theninjadev.ajoapi.testsupport.ApiTestClient;
+import com.theninjadev.ajoapi.testsupport.TestUser;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
@@ -41,14 +31,11 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -58,9 +45,6 @@ class SwapAcceptTest extends AbstractIntegrationTest {
     private static final int MEMBERS = 4;
     private static final LocalDate PAST_START = LocalDate.of(2026, 3, 31);
 
-    // Globally unique phone numbers — the container is shared and nothing rolls back.
-    private static final AtomicInteger PHONE_COUNTER = new AtomicInteger();
-
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private CycleRepository cycleRepository;
@@ -69,7 +53,12 @@ class SwapAcceptTest extends AbstractIntegrationTest {
     @Autowired private ContributionRepository contributionRepository;
     @Autowired private PayoutRepository payoutRepository;
 
-    private record TestUser(UUID id, String phone, String accessToken) {}
+    private ApiTestClient client;
+
+    @BeforeEach
+    void setUpClient() {
+        client = new ApiTestClient(mockMvc, objectMapper);
+    }
 
     /** Four members in a group's first round — everyone is a newcomer, so every swap is permitted. */
     private record Fixture(UUID roundId,
@@ -98,8 +87,8 @@ class SwapAcceptTest extends AbstractIntegrationTest {
         int aBefore = positionOf(f, f.a());
         int bBefore = positionOf(f, f.b());
 
-        var swap = requestSwap(f.a(), f.roundId(), f.b());
-        var accepted = accept(f.b(), swap.id());
+        var swap = client.requestSwap(f.a(), f.roundId(), f.b().id());
+        var accepted = client.accept(f.b(), swap.id());
 
         assertThat(accepted.status()).isEqualTo(SwapStatus.ACCEPTED);
         assertThat(positionOf(f, f.a())).isEqualTo(bBefore);
@@ -112,8 +101,8 @@ class SwapAcceptTest extends AbstractIntegrationTest {
         UUID aCycleBefore = cycleOf(f, f.a()).getId();
         UUID bCycleBefore = cycleOf(f, f.b()).getId();
 
-        var swap = requestSwap(f.a(), f.roundId(), f.b());
-        accept(f.b(), swap.id());
+        var swap = client.requestSwap(f.a(), f.roundId(), f.b().id());
+        client.accept(f.b(), swap.id());
 
         assertThat(cycleOf(f, f.a()).getId()).isEqualTo(bCycleBefore);
         assertThat(cycleOf(f, f.b()).getId()).isEqualTo(aCycleBefore);
@@ -123,8 +112,8 @@ class SwapAcceptTest extends AbstractIntegrationTest {
     void structuralInvariantsStillHoldAfterASwap() throws Exception {
         var f = setUp();
 
-        var swap = requestSwap(f.a(), f.roundId(), f.c());
-        accept(f.c(), swap.id());
+        var swap = client.requestSwap(f.a(), f.roundId(), f.c().id());
+        client.accept(f.c(), swap.id());
 
         assertStructuralInvariants(f.roundId());
     }
@@ -135,8 +124,8 @@ class SwapAcceptTest extends AbstractIntegrationTest {
         int dPosition = positionOf(f, f.d());
         UUID dCycle = cycleOf(f, f.d()).getId();
 
-        var swap = requestSwap(f.a(), f.roundId(), f.b());
-        accept(f.b(), swap.id());
+        var swap = client.requestSwap(f.a(), f.roundId(), f.b().id());
+        client.accept(f.b(), swap.id());
 
         assertThat(positionOf(f, f.d())).isEqualTo(dPosition);
         assertThat(cycleOf(f, f.d()).getId()).isEqualTo(dCycle);
@@ -149,36 +138,36 @@ class SwapAcceptTest extends AbstractIntegrationTest {
     @Test
     void theRequesterCannotAcceptTheirOwnRequest() throws Exception {
         var f = setUp();
-        var swap = requestSwap(f.a(), f.roundId(), f.b());
+        var swap = client.requestSwap(f.a(), f.roundId(), f.b().id());
 
-        acceptAndExpect(f.a(), swap.id(), 403);
+        client.acceptAndExpect(f.a(), swap.id(), 403);
     }
 
     @Test
     void aThirdPartyCannotAcceptSomeoneElsesRequest() throws Exception {
         var f = setUp();
-        var swap = requestSwap(f.a(), f.roundId(), f.b());
+        var swap = client.requestSwap(f.a(), f.roundId(), f.b().id());
 
-        acceptAndExpect(f.c(), swap.id(), 403);
+        client.acceptAndExpect(f.c(), swap.id(), 403);
         assertThat(swapStatus(swap.id())).isEqualTo(SwapStatus.PENDING);
     }
 
     @Test
     void aCancelledRequestCannotBeAccepted() throws Exception {
         var f = setUp();
-        var swap = requestSwap(f.a(), f.roundId(), f.b());
-        cancel(f.a(), swap.id());
+        var swap = client.requestSwap(f.a(), f.roundId(), f.b().id());
+        client.cancel(f.a(), swap.id());
 
-        acceptAndExpect(f.b(), swap.id(), 409);
+        client.acceptAndExpect(f.b(), swap.id(), 409);
     }
 
     @Test
     void aDeclinedRequestCannotBeAccepted() throws Exception {
         var f = setUp();
-        var swap = requestSwap(f.a(), f.roundId(), f.b());
-        decline(f.b(), swap.id());
+        var swap = client.requestSwap(f.a(), f.roundId(), f.b().id());
+        client.decline(f.b(), swap.id());
 
-        acceptAndExpect(f.b(), swap.id(), 409);
+        client.acceptAndExpect(f.b(), swap.id(), 409);
     }
 
     @Test
@@ -186,11 +175,11 @@ class SwapAcceptTest extends AbstractIntegrationTest {
         var f = setUp();
         int aAfterFirstAccept;
 
-        var swap = requestSwap(f.a(), f.roundId(), f.b());
-        accept(f.b(), swap.id());
+        var swap = client.requestSwap(f.a(), f.roundId(), f.b().id());
+        client.accept(f.b(), swap.id());
         aAfterFirstAccept = positionOf(f, f.a());
 
-        acceptAndExpect(f.b(), swap.id(), 409);
+        client.acceptAndExpect(f.b(), swap.id(), 409);
 
         // The second attempt must not swap them back.
         assertThat(positionOf(f, f.a())).isEqualTo(aAfterFirstAccept);
@@ -204,12 +193,12 @@ class SwapAcceptTest extends AbstractIntegrationTest {
     void acceptingSupersedesOtherPendingRequestsInvolvingEitherParticipantOnly() throws Exception {
         var f = setUp();
 
-        var accepted     = requestSwap(f.a(), f.roundId(), f.b());   // the one we accept
-        var intoA        = requestSwap(f.c(), f.roundId(), f.a());   // involves A
-        var fromB        = requestSwap(f.b(), f.roundId(), f.d());   // involves B
-        var unrelated    = requestSwap(f.d(), f.roundId(), f.c());   // involves neither
+        var accepted     = client.requestSwap(f.a(), f.roundId(), f.b().id());   // the one we accept
+        var intoA        = client.requestSwap(f.c(), f.roundId(), f.a().id());   // involves A
+        var fromB        = client.requestSwap(f.b(), f.roundId(), f.d().id());   // involves B
+        var unrelated    = client.requestSwap(f.d(), f.roundId(), f.c().id());   // involves neither
 
-        accept(f.b(), accepted.id());
+        client.accept(f.b(), accepted.id());
 
         assertThat(swapStatus(accepted.id())).isEqualTo(SwapStatus.ACCEPTED);
         assertThat(swapStatus(intoA.id())).isEqualTo(SwapStatus.SUPERSEDED);
@@ -220,12 +209,12 @@ class SwapAcceptTest extends AbstractIntegrationTest {
     @Test
     void aSupersededRequestCannotBeAccepted() throws Exception {
         var f = setUp();
-        var first  = requestSwap(f.a(), f.roundId(), f.b());
-        var second = requestSwap(f.c(), f.roundId(), f.a());
+        var first  = client.requestSwap(f.a(), f.roundId(), f.b().id());
+        var second = client.requestSwap(f.c(), f.roundId(), f.a().id());
 
-        accept(f.b(), first.id());                 // supersedes `second`
+        client.accept(f.b(), first.id());                 // supersedes `second`
 
-        acceptAndExpect(f.a(), second.id(), 409);
+        client.acceptAndExpect(f.a(), second.id(), 409);
     }
 
     // ------------------------------------------------------------------
@@ -243,8 +232,8 @@ class SwapAcceptTest extends AbstractIntegrationTest {
         var first = byPosition.getFirst();
         var last = byPosition.getLast();
 
-        var swap = requestSwap(last, f.roundId(), first);
-        accept(first, swap.id());
+        var swap = client.requestSwap(last, f.roundId(), first.id());
+        client.accept(first, swap.id());
 
         runFullRound(f);
 
@@ -278,8 +267,8 @@ class SwapAcceptTest extends AbstractIntegrationTest {
         var f = setUp();
 
         // Both requests involve A. Accepting either one invalidates the other.
-        var aToB = requestSwap(f.a(), f.roundId(), f.b());   // B will accept
-        var cToA = requestSwap(f.c(), f.roundId(), f.a());   // A will accept
+        var aToB = client.requestSwap(f.a(), f.roundId(), f.b().id());   // B will accept
+        var cToA = client.requestSwap(f.c(), f.roundId(), f.a().id());   // A will accept
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch ready = new CountDownLatch(2);
@@ -288,12 +277,12 @@ class SwapAcceptTest extends AbstractIntegrationTest {
         Callable<Integer> bAccepts = () -> {
             ready.countDown();
             go.await();
-            return acceptStatus(f.b(), aToB.id());
+            return client.acceptStatus(f.b(), aToB.id());
         };
         Callable<Integer> aAccepts = () -> {
             ready.countDown();
             go.await();
-            return acceptStatus(f.a(), cToA.id());
+            return client.acceptStatus(f.a(), cToA.id());
         };
 
         try {
@@ -374,84 +363,11 @@ class SwapAcceptTest extends AbstractIntegrationTest {
     private void runFullRound(Fixture f) throws Exception {
         for (Cycle cycle : cycleRepository.findByRoundIdOrderByCycleNumberAsc(f.roundId())) {
             for (TestUser member : f.members()) {
-                contribute(member, cycle.getId());
+                client.contribute(member, cycle.getId(), AMOUNT, member.id(), UUID.randomUUID().toString());
             }
             var beneficiary = f.userByParticipantId().get(cycle.getBeneficiaryId());
-            payout(f.admin(), cycle.getId(), beneficiary.id());
+            client.payout(f.admin(), cycle.getId(), beneficiary.id(), UUID.randomUUID().toString());
         }
-    }
-
-    // ------------------------------------------------------------------
-    // HTTP helpers — swaps
-    // ------------------------------------------------------------------
-
-    private SwapRequestSummary requestSwap(TestUser requester, UUID roundId, TestUser target) throws Exception {
-        var result = mockMvc.perform(post("/rounds/" + roundId + "/swaps")
-                        .header("Authorization", "Bearer " + requester.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CreateSwapRequest(target.id()))))
-                .andExpect(status().isCreated())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), SwapRequestSummary.class);
-    }
-
-    private SwapRequestSummary accept(TestUser caller, UUID swapId) throws Exception {
-        var result = mockMvc.perform(post("/swaps/" + swapId + "/accept")
-                        .header("Authorization", "Bearer " + caller.accessToken()))
-                .andExpect(status().isOk())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), SwapRequestSummary.class);
-    }
-
-    private void acceptAndExpect(TestUser caller, UUID swapId, int expectedStatus) throws Exception {
-        mockMvc.perform(post("/swaps/" + swapId + "/accept")
-                        .header("Authorization", "Bearer " + caller.accessToken()))
-                .andExpect(status().is(expectedStatus));
-    }
-
-    /** Returns the raw status instead of asserting — used from worker threads in the race test. */
-    private int acceptStatus(TestUser caller, UUID swapId) throws Exception {
-        return mockMvc.perform(post("/swaps/" + swapId + "/accept")
-                        .header("Authorization", "Bearer " + caller.accessToken()))
-                .andReturn()
-                .getResponse()
-                .getStatus();
-    }
-
-    private void cancel(TestUser caller, UUID swapId) throws Exception {
-        mockMvc.perform(post("/swaps/" + swapId + "/cancel")
-                        .header("Authorization", "Bearer " + caller.accessToken()))
-                .andExpect(status().isOk());
-    }
-
-    private void decline(TestUser caller, UUID swapId) throws Exception {
-        mockMvc.perform(post("/swaps/" + swapId + "/decline")
-                        .header("Authorization", "Bearer " + caller.accessToken()))
-                .andExpect(status().isOk());
-    }
-
-    // ------------------------------------------------------------------
-    // HTTP helpers — contributions and payouts
-    // ------------------------------------------------------------------
-
-    private void contribute(TestUser caller, UUID cycleId) throws Exception {
-        mockMvc.perform(post("/cycles/" + cycleId + "/contributions")
-                        .header("Authorization", "Bearer " + caller.accessToken())
-                        .header("Idempotency-Key", UUID.randomUUID().toString())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                new ContributeRequest(AMOUNT, caller.id(), null))))
-                .andExpect(status().isCreated());
-    }
-
-    private void payout(TestUser caller, UUID cycleId, UUID expectedBeneficiaryUserId) throws Exception {
-        mockMvc.perform(post("/cycles/" + cycleId + "/payout")
-                        .header("Authorization", "Bearer " + caller.accessToken())
-                        .header("Idempotency-Key", UUID.randomUUID().toString())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                new PayoutRequest(PayoutMethod.ONLINE, expectedBeneficiaryUserId))))
-                .andExpect(status().isCreated());
     }
 
     // ------------------------------------------------------------------
@@ -459,23 +375,23 @@ class SwapAcceptTest extends AbstractIntegrationTest {
     // ------------------------------------------------------------------
 
     private Fixture setUp() throws Exception {
-        var admin = registerUser("Alice");
-        var bola = registerUser("Bola");
-        var chidi = registerUser("Chidi");
-        var dayo = registerUser("Dayo");
+        var admin = client.registerUser("Alice");
+        var bola = client.registerUser("Bola");
+        var chidi = client.registerUser("Chidi");
+        var dayo = client.registerUser("Dayo");
         var members = List.of(admin, bola, chidi, dayo);
 
-        var groupId = createGroup(admin, "Alice's Ajo");
+        var groupId = client.createGroup(admin, "Alice's Ajo");
         for (TestUser member : members.subList(1, members.size())) {
-            addToGroup(admin, groupId, member);
+            client.addToGroup(admin, groupId, member);
         }
 
-        var roundId = createRound(admin, groupId, AMOUNT, PAST_START);
+        var roundId = client.createRound(admin, groupId, AMOUNT, PAST_START);
         for (TestUser member : members) {
-            addParticipant(admin, roundId, member);
+            client.addParticipant(admin, roundId, member);
         }
 
-        RoundDetail detail = activate(admin, roundId);
+        RoundDetail detail = client.activate(admin, roundId);
 
         Map<UUID, TestUser> usersById = members.stream()
                 .collect(Collectors.toMap(TestUser::id, Function.identity()));
@@ -487,72 +403,5 @@ class SwapAcceptTest extends AbstractIntegrationTest {
                 .collect(Collectors.toMap(ParticipantSummary::id, p -> usersById.get(p.user().id())));
 
         return new Fixture(roundId, members, participantIdByUserId, userByParticipantId);
-    }
-
-    private TestUser registerUser(String fullName) throws Exception {
-        String phone = "0905%07d".formatted(PHONE_COUNTER.incrementAndGet());
-        var request = new RegisterRequest(phone, "password123", fullName, null);
-        var result = mockMvc.perform(post("/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        AuthResponse response = objectMapper.readValue(
-                result.getResponse().getContentAsString(), AuthResponse.class);
-        return new TestUser(response.user().id(), response.user().phone(), response.accessToken());
-    }
-
-    private UUID createGroup(TestUser owner, String name) throws Exception {
-        var request = new CreateGroupRequest(name, "description");
-        var result = mockMvc.perform(post("/groups")
-                        .header("Authorization", "Bearer " + owner.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), GroupSummary.class).id();
-    }
-
-    private void addToGroup(TestUser admin, UUID groupId, TestUser invitee) throws Exception {
-        var request = new InviteMemberRequest(invitee.phone());
-        var result = mockMvc.perform(post("/groups/" + groupId + "/invites")
-                        .header("Authorization", "Bearer " + admin.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        var invite = objectMapper.readValue(
-                result.getResponse().getContentAsString(), GroupInviteSummary.class);
-
-        mockMvc.perform(post("/groups/invites/" + invite.id() + "/accept")
-                        .header("Authorization", "Bearer " + invitee.accessToken()))
-                .andExpect(status().isOk());
-    }
-
-    private UUID createRound(TestUser admin, UUID groupId, long amountKobo, LocalDate firstPayoutDate) throws Exception {
-        var request = new CreateRoundRequest(amountKobo, firstPayoutDate);
-        var result = mockMvc.perform(post("/groups/" + groupId + "/rounds")
-                        .header("Authorization", "Bearer " + admin.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), RoundSummary.class).id();
-    }
-
-    private void addParticipant(TestUser admin, UUID roundId, TestUser participant) throws Exception {
-        mockMvc.perform(post("/rounds/" + roundId + "/participants")
-                        .header("Authorization", "Bearer " + admin.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new AddParticipantRequest(participant.id()))))
-                .andExpect(status().isCreated());
-    }
-
-    private RoundDetail activate(TestUser caller, UUID roundId) throws Exception {
-        var result = mockMvc.perform(post("/rounds/" + roundId + "/activate")
-                        .header("Authorization", "Bearer " + caller.accessToken()))
-                .andExpect(status().isOk())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), RoundDetail.class);
     }
 }
