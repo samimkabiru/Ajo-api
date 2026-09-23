@@ -6,6 +6,7 @@ import com.theninjadev.ajoapi.auth.InvalidCredentialsException;
 import com.theninjadev.ajoapi.auth.InvalidPhoneNumberException;
 import com.theninjadev.ajoapi.auth.InvalidRefreshTokenException;
 import com.theninjadev.ajoapi.contribution.*;
+import com.theninjadev.ajoapi.exit.*;
 import com.theninjadev.ajoapi.group.AlreadyGroupMemberException;
 import com.theninjadev.ajoapi.group.CannotRemoveLastAdminException;
 import com.theninjadev.ajoapi.group.CannotRemoveSelfException;
@@ -270,6 +271,41 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BeneficiaryChangedException.class)
     public ProblemDetail handleBeneficiaryChanged(BeneficiaryChangedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(ExitRequestNotFoundException.class)
+    public ProblemDetail handleExitRequestNotFound(ExitRequestNotFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(ExitAlreadyRequestedException.class)
+    public ProblemDetail handleExitAlreadyRequested(ExitAlreadyRequestedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(ExitNotPendingSettlementException.class)
+    public ProblemDetail handleExitNotPendingSettlement(ExitNotPendingSettlementException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(NotExitingParticipantException.class)
+    public ProblemDetail handleNotExitingParticipant(NotExitingParticipantException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, e.getMessage());
+    }
+
+    @ExceptionHandler(NothingToRepayException.class)
+    public ProblemDetail handleNothingToRepay(NothingToRepayException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(RepaymentExceedsDebtException.class)
+    public ProblemDetail handleRepaymentExceedsDebt(RepaymentExceedsDebtException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(BeneficiaryNotActiveException.class)
+    public ProblemDetail handleBeneficiaryNotActive(BeneficiaryNotActiveException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 

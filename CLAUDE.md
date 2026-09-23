@@ -253,6 +253,12 @@ slice.
 - `noRollbackFor` on `SwapRequestStaleException`: safe only because it's thrown before any exchange write
 - Pure rules are static — like `violatesVeteranPrecedence` — so they can be tested without constructing a service
 
+> An exit only touches cycles when it completes. While `PENDING_SETTLEMENT`, the participant keeps their cycle and their position, so a cancelled exit needs no cycle repair.
+
+- `completeExit` is the single finalisation path — 8b calls it too
+- Payouts require an ACTIVE beneficiary
+- Exposure is always recomputed, never read from exposure_at_request
+
 ## Out of scope
 
 Deliberately excluded — do not add these:
@@ -272,3 +278,11 @@ Deliberately excluded — do not add these:
 - Do not modify `pom.xml` without being asked. The build works.
 - When a schema change is needed, add a new migration. Never edit an
   existing one.
+
+## Open Questions 
+
+- Should `repay` be allowed on a COMPLETED round?
+- Should a round with open obligations be allowed to complete?
+- A round can't complete once a cycle is VACANT — allPaid needs to accept PAID or VACANT
+- `repay` requires an ACTIVE round, so a debt outlives the round but can't be settled after it
+- `cycleForBeneficiary` throws for a participant whose cycle was vacated

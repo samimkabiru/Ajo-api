@@ -62,4 +62,10 @@ public class Cycle {
     public void reassignBeneficiary(UUID participantId) {
         this.beneficiaryId = participantId;
     }
+
+    /** Status and beneficiary change together so they can never drift apart. */
+    public void markVacant() {
+        this.status = CycleStatus.VACANT;
+        this.beneficiaryId = null;
+    }
 }

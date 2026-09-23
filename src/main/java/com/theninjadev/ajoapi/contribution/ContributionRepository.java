@@ -22,4 +22,7 @@ public interface ContributionRepository extends JpaRepository<Contribution, UUID
 
     @Query("select coalesce(sum(c.amountKobo), 0) from Contribution c where c.cycleId = :cycleId")
     long sumAmountKoboByCycleId(@Param("cycleId") UUID cycleId);
+
+    @Query("select coalesce(sum(c.amountKobo), 0) from Contribution c where c.participantId = :participantId")
+    long sumAmountKoboByParticipantId(@Param("participantId") UUID participantId);
 }

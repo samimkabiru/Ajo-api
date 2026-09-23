@@ -152,6 +152,9 @@ public class PayoutService {
                 .findById(cycle.getBeneficiaryId())
                 .orElseThrow(() -> new IllegalStateException("Cycle beneficiary not found"));
 
+        if (beneficiary.getStatus() != ParticipantStatus.ACTIVE)
+            throw new BeneficiaryNotActiveException();
+
         if (!beneficiary.getUserId().equals(request.expectedBeneficiaryUserId()))
             throw new BeneficiaryChangedException();
 

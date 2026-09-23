@@ -4,5 +4,6 @@ public enum EntryType {
     CONTRIBUTION,
     PAYOUT,
     REFUND,
-    SHORTFALL_SETTLEMENT
+    SHORTFALL_SETTLEMENT,
+    REPAYMENT
 }

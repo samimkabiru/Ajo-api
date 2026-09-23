@@ -4,6 +4,7 @@ import com.theninjadev.ajoapi.auth.AuthResponse;
 import com.theninjadev.ajoapi.auth.RegisterRequest;
 import com.theninjadev.ajoapi.contribution.ContributeRequest;
 import com.theninjadev.ajoapi.contribution.ContributionSummary;
+import com.theninjadev.ajoapi.exit.ExitRequestSummary;
 import com.theninjadev.ajoapi.group.CreateGroupRequest;
 import com.theninjadev.ajoapi.group.GroupInviteSummary;
 import com.theninjadev.ajoapi.group.GroupSummary;
@@ -278,5 +279,41 @@ public class ApiTestClient {
                 .andExpect(status().isOk())
                 .andReturn();
         return List.of(objectMapper.readValue(result.getResponse().getContentAsString(), SwapRequestSummary[].class));
+    }
+
+    // Exits
+
+    public List<ExitRequestSummary> listExitsForRound(TestUser caller, UUID roundId) throws Exception {
+        var result = mockMvc.perform(get("/rounds/" + roundId + "/exits")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().isOk())
+                .andReturn();
+        return List.of(objectMapper.readValue(result.getResponse().getContentAsString(), ExitRequestSummary[].class));
+    }
+
+    public void listExitsForRoundAndExpect(TestUser caller, UUID roundId, int expectedStatus) throws Exception {
+        mockMvc.perform(get("/rounds/" + roundId + "/exits")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().is(expectedStatus));
+    }
+
+    public void getMyExitAndExpect(TestUser caller, UUID roundId, int expectedStatus) throws Exception {
+        mockMvc.perform(get("/rounds/" + roundId + "/exit/mine")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().is(expectedStatus));
+    }
+
+    public ExitRequestSummary cancelExit(TestUser caller, UUID exitId) throws Exception {
+        var result = mockMvc.perform(post("/exits/" + exitId + "/cancel")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().isOk())
+                .andReturn();
+        return objectMapper.readValue(result.getResponse().getContentAsString(), ExitRequestSummary.class);
+    }
+
+    public void cancelExitAndExpect(TestUser caller, UUID exitId, int expectedStatus) throws Exception {
+        mockMvc.perform(post("/exits/" + exitId + "/cancel")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().is(expectedStatus));
     }
 }

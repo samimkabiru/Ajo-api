@@ -44,4 +44,16 @@ public class RoundParticipant {
     public void assignPosition(int payoutPosition) {
         this.payoutPosition = payoutPosition;
     }
+
+    public void markPendingExit() {
+        this.status = ParticipantStatus.PENDING_EXIT;
+    }
+
+    public void markExited() {
+        this.status = ParticipantStatus.EXITED;
+    }
+
+    public void markActive() {
+        this.status = ParticipantStatus.ACTIVE;
+    }
 }
