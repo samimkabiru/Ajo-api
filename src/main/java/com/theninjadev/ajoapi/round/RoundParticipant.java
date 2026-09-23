@@ -56,4 +56,9 @@ public class RoundParticipant {
     public void markActive() {
         this.status = ParticipantStatus.ACTIVE;
     }
+
+    /** Hands this slot — position, cycle and history — to another user. */
+    public void transferTo(UUID userId) {
+        this.userId = userId;
+    }
 }

@@ -5,5 +5,6 @@ public enum EntryType {
     PAYOUT,
     REFUND,
     SHORTFALL_SETTLEMENT,
-    REPAYMENT
+    REPAYMENT,
+    BUY_IN
 }

@@ -32,6 +32,7 @@ public class ExitService {
 
     private final ExitRequestRepository exitRequestRepository;
     private final RepaymentRepository repaymentRepository;
+    private final BuyInRepository buyInRepository;
     private final RoundRepository roundRepository;
     private final RoundParticipantRepository roundParticipantRepository;
     private final CycleRepository cycleRepository;
@@ -224,6 +225,159 @@ public class ExitService {
     }
 
     @Transactional
+    public BuyInSummary buyIn(UUID callerId, UUID exitId, BuyInRequest request, String idempotencyKey) {
+
+        if (idempotencyKey == null || idempotencyKey.isBlank())
+            throw new MissingIdempotencyKeyException();
+
+        // Phase 1 — discovery, no locks. Only ids survive past the clear().
+        UUID participantId;
+        UUID cycleId;
+        UUID roundId;
+        UUID leaverUserId;
+        UUID replacementUserId = request.replacementUserId();
+        {
+            ExitRequest discovered = exitRequestRepository.findById(exitId)
+                    .orElseThrow(ExitRequestNotFoundException::new);
+            Round round = getRoundOrThrow(discovered.getRoundId());
+            requireGroupMembership(round.getGroupId(), callerId);
+
+            BuyIn existing = buyInRepository.findByIdempotencyKey(idempotencyKey).orElse(null);
+            if (existing != null) {
+                if (!existing.getExitRequestId().equals(exitId))
+                    throw new IdempotencyKeyReusedException();
+                return buyInSummaries(List.of(existing)).getFirst();
+            }
+
+            // The replacement buys in for themselves; an admin may record it for them.
+            // The leaver cannot — they are the one being paid out.
+            if (!replacementUserId.equals(callerId)) {
+                GroupMember caller = groupMemberRepository
+                        .findByGroupIdAndUserId(round.getGroupId(), callerId)
+                        .orElseThrow(NotGroupMemberException::new);
+                if (caller.getRole() != GroupRole.ADMIN)
+                    throw new InsufficientRoleException();
+            }
+
+            if (!groupMemberRepository.existsByGroupIdAndUserId(round.getGroupId(), replacementUserId))
+                throw new UserNotGroupMemberException();
+
+            if (roundParticipantRepository.existsByRoundIdAndUserId(round.getId(), replacementUserId))
+                throw new AlreadyRoundParticipantException();
+
+            RoundParticipant slot = roundParticipantRepository.findById(discovered.getParticipantId())
+                    .orElseThrow(() -> new IllegalStateException("Exiting participant not found"));
+
+            participantId = slot.getId();
+            roundId = round.getId();
+            leaverUserId = slot.getUserId();          // captured before the transfer — the only record of who left
+            cycleId = cycleForBeneficiary(roundId, participantId)
+                    .orElseThrow(NothingToBuyIntoException::new)
+                    .getId();
+        }
+
+        entityManager.clear();
+
+        // Phase 2 — lock the slot's cycle, then reload everything fresh.
+        Cycle cycle = cycleRepository.findAllByIdForUpdate(List.of(cycleId)).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Slot has no cycle"));
+
+        ExitRequest exit = exitRequestRepository.findById(exitId)
+                .orElseThrow(ExitRequestNotFoundException::new);
+        RoundParticipant participant = roundParticipantRepository.findById(participantId)
+                .orElseThrow(() -> new IllegalStateException("Exiting participant not found"));
+        Round round = getRoundOrThrow(roundId);
+
+        if (round.getStatus() != RoundStatus.ACTIVE)
+            throw new RoundNotActiveException();
+
+        if (exit.getStatus() != ExitStatus.PENDING_SETTLEMENT)
+            throw new ExitNotPendingSettlementException();
+
+        if (buyInRepository.existsByExitRequestId(exitId))
+            throw new ExitAlreadySettledException();
+
+        // Nothing to take over from someone who has already collected.
+        if (cycle.getStatus() == CycleStatus.PAID)
+            throw new NothingToBuyIntoException();
+
+        long exposure = exposureOf(participantId);
+        if (exposure > 0)
+            throw new LeaverOwesGroupException();      // a debt is not transferable
+        if (exposure == 0)
+            throw new NothingToBuyIntoException();     // nothing owed back, so nothing to buy
+
+        long amount = -exposure;                        // what the leaver has put in
+        if (request.amountKobo() != amount)
+            throw new BuyInAmountMismatchException();
+
+        LedgerAccount pool = ledgerAccountRepository
+                .findByAccountTypeAndOwnerId(AccountType.ROUND_POOL, roundId)
+                .orElseThrow(() -> new IllegalStateException("Active round has no pool account"));
+
+        Instant now = Instant.now(clock);
+        UUID buyInId = UUID.randomUUID();
+
+        // Two postings, not one netted movement: the ledger shows both halves.
+        UUID buyInTransactionId = ledgerService.post(
+                EntryType.BUY_IN,
+                buyInId,
+                List.of(
+                        new PostingLine(LedgerAccounts.PLATFORM_CASH_ID, amount),
+                        new PostingLine(pool.getId(), -amount)));
+
+        UUID refundTransactionId = ledgerService.post(
+                EntryType.REFUND,
+                buyInId,
+                List.of(
+                        new PostingLine(LedgerAccounts.PLATFORM_CASH_ID, -amount),
+                        new PostingLine(pool.getId(), amount)));
+
+        BuyIn buyIn = BuyIn.builder()
+                .id(buyInId)
+                .roundId(roundId)
+                .exitRequestId(exitId)
+                .participantId(participantId)
+                .leaverUserId(leaverUserId)
+                .replacementUserId(replacementUserId)
+                .amountKobo(amount)
+                .method(request.method() == null ? BuyInMethod.ONLINE : request.method())
+                .recordedBy(callerId)
+                .idempotencyKey(idempotencyKey)
+                .buyInTransactionId(buyInTransactionId)
+                .refundTransactionId(refundTransactionId)
+                .createdAt(now)
+                .build();
+
+        try {
+            buyInRepository.saveAndFlush(buyIn);
+        } catch (DataIntegrityViolationException e) {
+            // Another buy-in for this exit committed between our check above and this insert.
+            throw new ExitAlreadySettledException();
+        }
+
+        // The slot passes to the replacement. Position, cycle and contribution history
+        // all hang off participant_id, so they come with it.
+        participant.transferTo(replacementUserId);
+
+        // It is the replacement's slot now, not the leaver's — so it goes back to ACTIVE
+        // rather than EXITED, and the cycle is NOT vacated.
+        participant.markActive();
+        roundParticipantRepository.save(participant);
+
+        exit.complete(now);
+        exitRequestRepository.save(exit);
+
+        // Swaps the leaver agreed to can no longer stand.
+        var staleSwaps = swapRequestRepository.findPendingInvolvingForUpdate(List.of(participantId));
+        staleSwaps.forEach(s -> s.supersede(now));
+        swapRequestRepository.saveAll(staleSwaps);
+
+        return buyInSummaries(List.of(buyIn)).getFirst();
+    }
+
+    @Transactional
     public ExitRequestSummary cancelExit(UUID callerId, UUID exitId) {
         ExitRequest exit = exitRequestRepository.findById(exitId)
                 .orElseThrow(ExitRequestNotFoundException::new);
@@ -275,6 +429,25 @@ public class ExitService {
 
         long exposure = exposureOf(participantId);
         return new ExposureSummary(participantId, exposure, exposure > 0, exposure < 0);
+    }
+
+    public List<BuyInSummary> listBuyInsForRound(UUID callerId, UUID roundId) {
+        Round round = getRoundOrThrow(roundId);
+        requireGroupMembership(round.getGroupId(), callerId);
+
+        return buyInSummaries(buyInRepository.findByRoundId(roundId));
+    }
+
+    public BuyInSummary getBuyInForExit(UUID callerId, UUID exitId) {
+        ExitRequest exit = exitRequestRepository.findById(exitId)
+                .orElseThrow(ExitRequestNotFoundException::new);
+        Round round = getRoundOrThrow(exit.getRoundId());
+        requireGroupMembership(round.getGroupId(), callerId);
+
+        BuyIn buyIn = buyInRepository.findByExitRequestId(exitId)
+                .orElseThrow(BuyInNotFoundException::new);
+
+        return buyInSummaries(List.of(buyIn)).getFirst();
     }
 
     private Optional<Cycle> cycleForBeneficiary(UUID roundId, UUID participantId) {
@@ -347,6 +520,30 @@ public class ExitService {
         return repayments.stream()
                 .map(repayment -> exitMapper.toRepaymentSummary(
                         repayment, usersByParticipantId.get(repayment.getParticipantId())))
+                .toList();
+    }
+
+    /**
+     * Leaver and replacement come from the ids snapshotted on the row, never from the
+     * participant — after the transfer the participant belongs to the replacement.
+     * One user query regardless of row count.
+     */
+    private List<BuyInSummary> buyInSummaries(List<BuyIn> buyIns) {
+        if (buyIns.isEmpty())
+            return List.of();
+
+        Set<UUID> userIds = new HashSet<>();
+        buyIns.forEach(b -> {
+            userIds.add(b.getLeaverUserId());
+            userIds.add(b.getReplacementUserId());
+        });
+
+        Map<UUID, UserSummary> usersById = userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId, userMapper::toSummary));
+
+        return buyIns.stream()
+                .map(b -> exitMapper.toBuyInSummary(
+                        b, usersById.get(b.getLeaverUserId()), usersById.get(b.getReplacementUserId())))
                 .toList();
     }
 

@@ -60,6 +60,25 @@ public class ExitController {
         return ResponseEntity.ok(exitService.getExposure(currentUserId(), participantId));
     }
 
+    @PostMapping("/exits/{exitId}/buy-in")
+    public ResponseEntity<BuyInSummary> buyIn(
+            @PathVariable UUID exitId,
+            @Valid @RequestBody BuyInRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(exitService.buyIn(currentUserId(), exitId, request, idempotencyKey));
+    }
+
+    @GetMapping("/rounds/{roundId}/buy-ins")
+    public ResponseEntity<List<BuyInSummary>> listBuyInsForRound(@PathVariable UUID roundId) {
+        return ResponseEntity.ok(exitService.listBuyInsForRound(currentUserId(), roundId));
+    }
+
+    @GetMapping("/exits/{exitId}/buy-in")
+    public ResponseEntity<BuyInSummary> getBuyInForExit(@PathVariable UUID exitId) {
+        return ResponseEntity.ok(exitService.getBuyInForExit(currentUserId(), exitId));
+    }
+
     private UUID currentUserId() {
         return (UUID) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     }

@@ -4,6 +4,7 @@ import com.theninjadev.ajoapi.auth.AuthResponse;
 import com.theninjadev.ajoapi.auth.RegisterRequest;
 import com.theninjadev.ajoapi.contribution.ContributeRequest;
 import com.theninjadev.ajoapi.contribution.ContributionSummary;
+import com.theninjadev.ajoapi.exit.BuyInSummary;
 import com.theninjadev.ajoapi.exit.ExitRequestSummary;
 import com.theninjadev.ajoapi.group.CreateGroupRequest;
 import com.theninjadev.ajoapi.group.GroupInviteSummary;
@@ -283,6 +284,14 @@ public class ApiTestClient {
 
     // Exits
 
+    public ExitRequestSummary requestExit(TestUser caller, UUID roundId) throws Exception {
+        var result = mockMvc.perform(post("/rounds/" + roundId + "/exit")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readValue(result.getResponse().getContentAsString(), ExitRequestSummary.class);
+    }
+
     public List<ExitRequestSummary> listExitsForRound(TestUser caller, UUID roundId) throws Exception {
         var result = mockMvc.perform(get("/rounds/" + roundId + "/exits")
                         .header("Authorization", "Bearer " + caller.accessToken()))
@@ -315,5 +324,29 @@ public class ApiTestClient {
         mockMvc.perform(post("/exits/" + exitId + "/cancel")
                         .header("Authorization", "Bearer " + caller.accessToken()))
                 .andExpect(status().is(expectedStatus));
+    }
+
+    // Buy-ins
+
+    public List<BuyInSummary> listBuyInsForRound(TestUser caller, UUID roundId) throws Exception {
+        var result = mockMvc.perform(get("/rounds/" + roundId + "/buy-ins")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().isOk())
+                .andReturn();
+        return List.of(objectMapper.readValue(result.getResponse().getContentAsString(), BuyInSummary[].class));
+    }
+
+    public void listBuyInsForRoundAndExpect(TestUser caller, UUID roundId, int expectedStatus) throws Exception {
+        mockMvc.perform(get("/rounds/" + roundId + "/buy-ins")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().is(expectedStatus));
+    }
+
+    public void getBuyInForExitAndExpectDetail(TestUser caller, UUID exitId,
+                                               int expectedStatus, String expectedDetail) throws Exception {
+        mockMvc.perform(get("/exits/" + exitId + "/buy-in")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().is(expectedStatus))
+                .andExpect(jsonPath("$.detail").value(expectedDetail));
     }
 }

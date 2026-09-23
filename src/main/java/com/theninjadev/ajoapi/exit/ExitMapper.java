@@ -14,4 +14,9 @@ public interface ExitMapper {
     @Mapping(target = "id", source = "repayment.id")
     @Mapping(target = "participant", source = "participant")
     RepaymentSummary toRepaymentSummary(Repayment repayment, UserSummary participant);
+
+    @Mapping(target = "id", source = "buyIn.id")
+    @Mapping(target = "leaver", source = "leaver")
+    @Mapping(target = "replacement", source = "replacement")
+    BuyInSummary toBuyInSummary(BuyIn buyIn, UserSummary leaver, UserSummary replacement);
 }

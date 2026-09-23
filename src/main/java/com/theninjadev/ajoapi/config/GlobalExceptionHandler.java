@@ -309,6 +309,31 @@ public class GlobalExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 
+    @ExceptionHandler(BuyInNotFoundException.class)
+    public ProblemDetail handleBuyInNotFound(BuyInNotFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(ExitAlreadySettledException.class)
+    public ProblemDetail handleExitAlreadySettled(ExitAlreadySettledException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(LeaverOwesGroupException.class)
+    public ProblemDetail handleLeaverOwesGroup(LeaverOwesGroupException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(NothingToBuyIntoException.class)
+    public ProblemDetail handleNothingToBuyInto(NothingToBuyIntoException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(BuyInAmountMismatchException.class)
+    public ProblemDetail handleBuyInAmountMismatch(BuyInAmountMismatchException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ProblemDetail handleValidationFailure(MethodArgumentNotValidException e) {
         String detail = e.getBindingResult().getFieldErrors().stream()
