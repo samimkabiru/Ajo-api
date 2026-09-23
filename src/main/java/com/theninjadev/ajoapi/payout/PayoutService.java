@@ -224,11 +224,12 @@ public class PayoutService {
         stale.forEach(rq -> rq.supersede(now));
         swapRequestRepository.saveAll(stale);
 
-        boolean allPaid = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.getId())
+        boolean allSettled = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.getId())
                 .stream()
-                .allMatch(c -> c.getStatus() == CycleStatus.PAID);
+                .allMatch(c -> c.getStatus() == CycleStatus.PAID
+                        || c.getStatus() == CycleStatus.VACANT);
 
-        if (allPaid) {
+        if (allSettled) {
             round.complete(now);
             roundRepository.save(round);
         }

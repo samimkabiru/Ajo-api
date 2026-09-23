@@ -4,14 +4,7 @@ import com.theninjadev.ajoapi.ledger.LedgerEntry;
 import com.theninjadev.ajoapi.ledger.LedgerEntryRepository;
 import com.theninjadev.ajoapi.payout.PayoutMethod;
 import com.theninjadev.ajoapi.payout.PayoutRequest;
-import com.theninjadev.ajoapi.round.Cycle;
-import com.theninjadev.ajoapi.round.CycleRepository;
-import com.theninjadev.ajoapi.round.CycleStatus;
-import com.theninjadev.ajoapi.round.ParticipantStatus;
-import com.theninjadev.ajoapi.round.ParticipantSummary;
-import com.theninjadev.ajoapi.round.RoundDetail;
-import com.theninjadev.ajoapi.round.RoundParticipant;
-import com.theninjadev.ajoapi.round.RoundParticipantRepository;
+import com.theninjadev.ajoapi.round.*;
 import com.theninjadev.ajoapi.swap.PositionSwapRequestRepository;
 import com.theninjadev.ajoapi.swap.SwapStatus;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
@@ -55,6 +48,7 @@ class ExitTest extends AbstractIntegrationTest {
     @Autowired private RepaymentRepository repaymentRepository;
     @Autowired private LedgerEntryRepository ledgerEntryRepository;
     @Autowired private PositionSwapRequestRepository swapRequestRepository;
+    @Autowired private RoundRepository roundRepository;
 
     private ApiTestClient client;
 
@@ -398,6 +392,57 @@ class ExitTest extends AbstractIntegrationTest {
                 .hasSize(2);
         assertThat(cycles(f).stream().filter(c -> c.getStatus() == CycleStatus.VACANT))
                 .hasSize(1);
+    }
+
+    @Test
+    void aRoundCompletesEvenWithAVacantCycle() throws Exception {
+        var f = setUp();
+        var leaver = f.members().get(1);                  // not the admin, so payouts can still be recorded
+        var remaining = f.membersOtherThan(leaver);
+
+        requestExit(leaver, f.roundId());                 // zero exposure — their cycle becomes VACANT
+
+        for (Cycle cycle : cycles(f)) {
+            if (cycle.getStatus() == CycleStatus.VACANT) continue;   // nobody collects this one
+
+            for (TestUser member : remaining) {
+                client.contribute(member, cycle.getId(), AMOUNT, member.id(), newKey());
+            }
+            client.payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
+        }
+
+        assertThat(roundRepository.findById(f.roundId()).orElseThrow().getStatus())
+                .isEqualTo(RoundStatus.COMPLETED);
+    }
+
+    @Test
+    void aDebtCanStillBeRepaidAfterTheRoundCompletes() throws Exception {
+        var f = setUp();
+        var debtor = collectorWithDebt(f);                // collected cycle 1, paid one month
+        long debt = FULL_POT - AMOUNT;
+        var others = f.membersOtherThan(debtor);
+
+        var exit = requestExit(debtor, f.roundId());      // PENDING_SETTLEMENT — they owe
+
+        // The round runs to its end without them paying another kobo.
+        for (Cycle cycle : cycles(f)) {
+            if (cycle.getStatus() == CycleStatus.PAID) continue;
+
+            for (TestUser member : others) {
+                client.contribute(member, cycle.getId(), AMOUNT, member.id(), newKey());
+            }
+            client.payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
+        }
+
+        assertThat(roundRepository.findById(f.roundId()).orElseThrow().getStatus())
+                .isEqualTo(RoundStatus.COMPLETED);
+
+        // The obligation outlives the round.
+        repay(debtor, f.participantIdOf(debtor), debt, newKey());
+
+        assertThat(exitStatus(exit.id())).isEqualTo(ExitStatus.COMPLETED);
+        assertThat(participant(f, debtor).getStatus()).isEqualTo(ParticipantStatus.EXITED);
+        assertThat(exposureOf(f.admin(), f.participantIdOf(debtor)).exposureKobo()).isZero();
     }
 
     // Domain helpers

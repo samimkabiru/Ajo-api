@@ -22,10 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -72,7 +69,9 @@ public class ExitService {
                 throw new ExitAlreadyRequestedException();
 
             participantId = participant.getId();
-            cycleId = cycleForBeneficiary(roundId, participantId).getId();
+            cycleId = cycleForBeneficiary(roundId, participantId)
+                        .orElseThrow(() -> new IllegalStateException("Active participant has no cycle"))
+                        .getId();
         }
 
         entityManager.clear();
@@ -153,21 +152,25 @@ public class ExitService {
                     throw new InsufficientRoleException();
             }
 
-            cycleId = cycleForBeneficiary(participant.getRoundId(), participantId).getId();
+            cycleId = cycleForBeneficiary(participant.getRoundId(), participantId)
+                    .map(Cycle::getId)
+                    .orElse(null);
         }
 
         entityManager.clear();
 
         // Phase 2 — lock the cycle, then reload everything fresh.
-        Cycle cycle = cycleRepository.findAllByIdForUpdate(List.of(cycleId)).stream()
+        Cycle cycle = cycleId == null
+                ? null
+                : cycleRepository.findAllByIdForUpdate(List.of(cycleId)).stream()
                 .findFirst()
-                .orElseThrow(() -> new IllegalStateException("Participant has no cycle"));
+                .orElseThrow(() -> new IllegalStateException("Cycle disappeared"));
 
         RoundParticipant participant = roundParticipantRepository.findById(participantId)
                 .orElseThrow(RoundParticipantNotFoundException::new);
         Round round = getRoundOrThrow(participant.getRoundId());
 
-        if (round.getStatus() != RoundStatus.ACTIVE)
+        if (round.getStatus() != RoundStatus.ACTIVE && round.getStatus() != RoundStatus.COMPLETED)
             throw new RoundNotActiveException();
 
         long exposure = exposureOf(participantId);
@@ -274,11 +277,10 @@ public class ExitService {
         return new ExposureSummary(participantId, exposure, exposure > 0, exposure < 0);
     }
 
-    private Cycle cycleForBeneficiary(UUID roundId, UUID participantId) {
+    private Optional<Cycle> cycleForBeneficiary(UUID roundId, UUID participantId) {
         return cycleRepository.findByRoundIdOrderByCycleNumberAsc(roundId).stream()
                 .filter(c -> participantId.equals(c.getBeneficiaryId()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException("Participant has no cycle in this round"));
+                .findFirst();
     }
 
     private ExitRequestSummary toSummary(ExitRequest exit, RoundParticipant participant) {
@@ -297,8 +299,8 @@ public class ExitService {
         participant.markExited();
         exit.complete(now);
 
-        // Only vacate a cycle they never collected from. A PAID cycle stays as it is.
-        if (lockedCycle.getStatus() != CycleStatus.PAID) {
+        // Null when the participant's cycle was already vacated — nothing left to vacate.
+        if (lockedCycle != null && lockedCycle.getStatus() != CycleStatus.PAID) {
             lockedCycle.markVacant();
             cycleRepository.save(lockedCycle);
         }
@@ -306,7 +308,6 @@ public class ExitService {
         roundParticipantRepository.save(participant);
         exitRequestRepository.save(exit);
 
-        // They are leaving: any swap they are part of can no longer happen.
         var staleSwaps = swapRequestRepository.findPendingInvolvingForUpdate(List.of(participant.getId()));
         staleSwaps.forEach(s -> s.supersede(now));
         swapRequestRepository.saveAll(staleSwaps);
