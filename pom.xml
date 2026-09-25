@@ -97,6 +97,14 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- ===== API docs ===== -->
+        <!-- springdoc 3.x targets Spring Boot 4; 3.1.x is built against Boot 4.1. -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>3.1.1</version>
+        </dependency>
+
         <!-- ===== Test ===== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
