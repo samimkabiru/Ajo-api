@@ -14,8 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class JwtServiceTest {
 
-    private final JwtProperties jwtProperties =
-            new JwtProperties("0123456789abcdef0123456789abcdef01234567", 15, 30);
+    // Dummy base64 keys, test-only. Each decodes to 320 bits: "test-only dummy JWT key #1/#2, not a secret".
+    private static final String KEY_ONE = "dGVzdC1vbmx5IGR1bW15IEpXVCBrZXkgIzEsIG5vdCBhIHNlY3JldA==";
+    private static final String KEY_TWO = "dGVzdC1vbmx5IGR1bW15IEpXVCBrZXkgIzIsIG5vdCBhIHNlY3JldA==";
+
+    private final JwtProperties jwtProperties = new JwtProperties(KEY_ONE, 15, 30);
 
     @Test
     void accessTokenRoundTrips() {
@@ -60,10 +63,27 @@ class JwtServiceTest {
         var mintingService = new JwtService(jwtProperties, clock);
         var token = mintingService.generateAccessToken(UUID.randomUUID());
 
-        var otherProperties = new JwtProperties("fedcba9876543210fedcba9876543210fedcba98", 15, 30);
+        var otherProperties = new JwtProperties(KEY_TWO, 15, 30);
         var verifyingService = new JwtService(otherProperties, clock);
 
         assertThrows(SignatureException.class, () -> verifyingService.parseClaims(token));
+    }
+
+    @Test
+    void aMissingSecretIsRejectedAtStartup() {
+        // An unset JWT_SECRET reaches the binder as the unresolved placeholder text.
+        var e = assertThrows(IllegalStateException.class, () -> new JwtProperties("${JWT_SECRET}", 15, 30));
+        assertThat(e.getMessage()).contains("JWT_SECRET is not set");
+        assertThrows(IllegalStateException.class, () -> new JwtProperties(" ", 15, 30));
+    }
+
+    @Test
+    void aKeyShorterThan256BitsIsRejectedAtStartup() {
+        var clock = Clock.systemUTC();
+        var weak = new JwtProperties("dG9vLXNob3J0LXRlc3Qta2V5", 15, 30);   // "too-short-test-key": 144 bits
+
+        var e = assertThrows(IllegalStateException.class, () -> new JwtService(weak, clock));
+        assertThat(e.getMessage()).contains("at least 256 bits");
     }
 
     @Test

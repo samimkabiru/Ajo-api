@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: maven
+
+      # mvnw is committed with its execute bit; this is only a fallback.
+      - name: Make Maven wrapper executable
+        run: chmod +x mvnw
+
+      # No secrets needed: the "test" profile supplies a dummy JWT key and Testcontainers
+      # starts Postgres in Docker, which ubuntu-latest provides.
+      - name: Build and test
+        run: ./mvnw -B verify

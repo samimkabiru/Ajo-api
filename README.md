@@ -89,14 +89,17 @@ The frontend will be a Next.js web app (later a PWA), keeping the focus on backe
 
 ### 1. Configure environment
 
-Create a `.env` file in the project root (it's git-ignored):
+Copy `.env.example` to `.env` in the project root (it's git-ignored) and fill it in:
 
 ```env
 DB_URL=jdbc:postgresql://localhost:5432/ajo
 DB_USERNAME=postgres
 DB_PASSWORD=your-password
-JWT_SECRET=a-long-random-string
+JWT_SECRET=<output of: openssl rand -base64 64>
+CORS_ALLOWED_ORIGINS=http://localhost:3000
 ```
+
+> `JWT_SECRET` must be base64 and decode to at least 256 bits. There is no default: the app refuses to start without a valid one.
 
 > The URL must be in JDBC form (`jdbc:postgresql://host:port/db`). Keep the username and password in their own variables — don't put them inside the URL.
 
@@ -136,8 +139,11 @@ The API runs as a Docker web service on Render, connected to a Neon Postgres dat
 | `DB_URL` | JDBC URL, e.g. `jdbc:postgresql://<host>/<db>?sslmode=require` |
 | `DB_USERNAME` | Database user |
 | `DB_PASSWORD` | Database password |
-| `JWT_SECRET` | Secret for signing tokens |
+| `JWT_SECRET` | Base64-encoded signing key, at least 256 bits (`openssl rand -base64 64`). Required |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the API, e.g. `https://ajo.example.com`. Defaults to `http://localhost:3000` |
 | `PORT` | Set automatically by Render |
+
+Render's health check path is `/actuator/health/liveness`. It does not touch the database, so a Neon cold start can't fail a deploy or trigger a restart. `/actuator/health` includes the database check and shows the real status.
 
 ## Roadmap
 

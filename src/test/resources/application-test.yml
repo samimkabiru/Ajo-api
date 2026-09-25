@@ -1,0 +1,7 @@
+# Test profile, activated by AbstractIntegrationTest. Lets the suite run without a .env file
+# (in CI, or on a fresh clone): Postgres comes from Testcontainers via @ServiceConnection.
+
+jwt:
+  # TEST-ONLY dummy key, never used anywhere else. Decodes to the text
+  # "ci-and-local-tests-only dummy JWT signing key, never used in production" (568 bits).
+  secret: Y2ktYW5kLWxvY2FsLXRlc3RzLW9ubHkgZHVtbXkgSldUIHNpZ25pbmcga2V5LCBuZXZlciB1c2VkIGluIHByb2R1Y3Rpb24=

@@ -1,8 +1,14 @@
 package com.theninjadev.ajoapi.testsupport;
 
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
+/**
+ * Every integration test shares this base: a real Postgres from Testcontainers and the "test"
+ * profile (application-test.yml), which supplies a dummy JWT secret so no .env is needed.
+ */
+@ActiveProfiles("test")
 public abstract class AbstractIntegrationTest {
 
     @ServiceConnection
