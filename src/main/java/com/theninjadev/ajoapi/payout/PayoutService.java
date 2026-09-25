@@ -18,8 +18,10 @@ import com.theninjadev.ajoapi.round.*;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -49,6 +51,7 @@ public class PayoutService {
     private final PositionSwapRequestRepository swapRequestRepository;
     private final ContributionRepository contributionRepository;
     private final ShortfallSettlementRepository shortfallSettlementRepository;
+    private final ShortfallDistributor shortfallDistributor;
 
     public List<PayoutSummary> listForRound(UUID callerId, UUID roundId) {
         Round round = getRoundOrThrow(roundId);
@@ -130,9 +133,11 @@ public class PayoutService {
                     .findById(participant.getUserId())
                     .orElseThrow(() -> new IllegalStateException("User not found"));
 
-            return payoutMapper
-                    .toPayoutSummary(payout, userMapper.toSummary(user),
-                            payout.getExpectedAmountKobo() - payout.getActualAmountKobo());
+            long claimed = shortfallClaimRepository.findByCycleId(cycleId)
+                    .map(ShortfallClaim::getAmountKobo)
+                    .orElse(0L);
+
+            return payoutMapper.toPayoutSummary(payout, userMapper.toSummary(user), claimed);
 
         }
 
@@ -177,14 +182,30 @@ public class PayoutService {
 
         long participantCount = roundParticipantRepository.findByRoundId(round.getId()).size();
         long expected = participantCount * round.getContributionAmountKobo();
-        long actual = Math.min(expected, poolBalance);
+        long capped = Math.min(expected, poolBalance);
 
-        if (actual <= 0) throw new EmptyPoolException();
+        if (capped <= 0) throw new EmptyPoolException();
+
+        // The beneficiary's own arrears come out of their payout. Capped at what is
+        // available, so the payout can reach zero but never go negative.
+        long arrears = Math.min(arrearsOf(beneficiary.getId(), cycle), capped);
+        long actual = capped - arrears;
+
+        // A claim means the group underpaid this person. Two things are not that:
+        //  - the withheld arrears: claiming them would have the group owe a defaulter
+        //    the very money they failed to pay;
+        //  - their own missing contribution to this cycle: it already shows up as a
+        //    smaller pot, so claiming it would do the same.
+        long ownMissing = contributionRepository.existsByCycleIdAndParticipantId(cycleId, beneficiary.getId())
+                ? 0
+                : round.getContributionAmountKobo();
+        long claimAmount = Math.max(0, expected - capped - ownMissing);
 
         UUID payoutId = UUID.randomUUID();
         Instant now = Instant.now(clock);
 
-        UUID transactionId = ledgerService.post(
+        // LedgerService rejects zero-amount lines, so a fully withheld payout posts nothing.
+        UUID transactionId = actual == 0 ? null : ledgerService.post(
                 EntryType.PAYOUT,
                 payoutId,
                 List.of(
@@ -197,6 +218,7 @@ public class PayoutService {
                 .participantId(beneficiary.getId())
                 .expectedAmountKobo(expected)
                 .actualAmountKobo(actual)
+                .arrearsWithheldKobo(arrears)
                 .method(request.method())
                 .recordedBy(callerId)
                 .idempotencyKey(idempotencyKey)
@@ -210,15 +232,18 @@ public class PayoutService {
             throw new CycleAlreadyPaidOutException();
         }
 
-        if (actual < expected) {
+        if (claimAmount > 0) {
             shortfallClaimRepository.save(ShortfallClaim.builder()
                     .id(UUID.randomUUID())
                     .cycleId(cycleId)
                     .participantId(beneficiary.getId())
-                    .amountKobo(expected - actual)
+                    .amountKobo(claimAmount)
                     .createdAt(now)
                     .build());
         }
+
+        if (arrears > 0)
+            distributeArrears(beneficiary.getId(), cycle, arrears, pool.getId(), now);
 
         cycle.markPaid();
         cycleRepository.save(cycle);
@@ -240,13 +265,56 @@ public class PayoutService {
         User beneficiaryUser = userRepository.findById(beneficiary.getUserId())
                 .orElseThrow(() -> new IllegalStateException("User not found"));
 
-        return payoutMapper.toPayoutSummary(payout, userMapper.toSummary(beneficiaryUser), expected - actual);
+        return payoutMapper.toPayoutSummary(payout, userMapper.toSummary(beneficiaryUser), claimAmount);
     }
 
-    /** What this participant should have paid by the given cycle, minus what they have paid. */
+    /**
+     * Withheld arrears go first to the claims the missed contributions caused, then to
+     * the round's other open claims. Anything left stays in the pool. The beneficiary's
+     * own claims are excluded throughout: paying them from their own arrears would hand
+     * the withheld money straight back.
+     */
+    private void distributeArrears(UUID beneficiaryId, Cycle cycle, long arrears,
+                                   UUID poolAccountId, Instant now) {
+        long remaining = arrears;
+
+        List<UUID> missed = missedEarlierCycleIds(beneficiaryId, cycle);
+        if (!missed.isEmpty()) {
+            remaining = shortfallDistributor.distribute(
+                    othersClaims(shortfallClaimRepository.findOpenByCycleIdsOldestFirst(missed), beneficiaryId),
+                    remaining, cycle.getId(), poolAccountId, now).remaining();
+        }
+
+        if (remaining > 0) {
+            shortfallDistributor.distribute(
+                    othersClaims(shortfallClaimRepository.findOpenByRoundIdOldestFirst(cycle.getRoundId()), beneficiaryId),
+                    remaining, cycle.getId(), poolAccountId, now);
+        }
+    }
+
+    private static List<ShortfallClaim> othersClaims(List<ShortfallClaim> claims, UUID beneficiaryId) {
+        return claims.stream().filter(c -> !c.getParticipantId().equals(beneficiaryId)).toList();
+    }
+
+    /**
+     * What this participant owes for earlier cycles they did not pay into. The cycle being
+     * collected is excluded: a missing contribution to it has already shrunk the pot.
+     * Counted per missed cycle rather than from a running total, so a duplicate or early
+     * contribution cannot distort it. Not exposure — exposure cannot see a missed month.
+     */
     long arrearsOf(UUID participantId, Cycle cycle) {
-        // TODO: implemented by hand
-        throw new UnsupportedOperationException();
+        Round round = getRoundOrThrow(cycle.getRoundId());
+        return round.getContributionAmountKobo() * missedEarlierCycleIds(participantId, cycle).size();
+    }
+
+    /** Cycles before this one that the participant has no contribution for. */
+    private List<UUID> missedEarlierCycleIds(UUID participantId, Cycle cycle) {
+        Set<UUID> paid = new HashSet<>(contributionRepository.findContributedCycleIdsByParticipantId(participantId));
+        return cycleRepository.findByRoundIdOrderByCycleNumberAsc(cycle.getRoundId()).stream()
+                .filter(c -> c.getCycleNumber() < cycle.getCycleNumber())
+                .map(Cycle::getId)
+                .filter(id -> !paid.contains(id))
+                .toList();
     }
 
     private List<PayoutSummary> payoutSummaries(List<Payout> payouts) {
@@ -263,11 +331,16 @@ public class PayoutService {
                 .stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
 
+        Map<UUID, Long> claimedByCycleId = shortfallClaimRepository.findByCycleIdIn(
+                        payouts.stream().map(Payout::getCycleId).toList())
+                .stream()
+                .collect(Collectors.toMap(ShortfallClaim::getCycleId, ShortfallClaim::getAmountKobo));
+
         return payouts.stream()
                 .map(payout -> payoutMapper.toPayoutSummary(
                         payout,
                         beneficiarySummary(payout, participantsById, usersById),
-                        payout.getExpectedAmountKobo() - payout.getActualAmountKobo()))
+                        claimedByCycleId.getOrDefault(payout.getCycleId(), 0L)))
                 .toList();
     }
 

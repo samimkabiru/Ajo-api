@@ -159,9 +159,9 @@ class PayoutTest extends AbstractIntegrationTest {
         var f = setUp(PAST_START);
         var cycle = f.cycles().getFirst();
 
-        // Two of three contribute.
-        client.contribute(f.admin(), cycle.getId(), AMOUNT, f.admin().id(), newKey());
-        client.contribute(f.ada(), cycle.getId(), AMOUNT, f.ada().id(), newKey());
+        // Two of three contribute — the beneficiary and one other, so the missing share
+        // is someone else's. (A beneficiary's own missing share raises no claim.)
+        contributeBeneficiaryAndOneOther(f, cycle);
 
         var payout = client.payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
 
@@ -176,8 +176,7 @@ class PayoutTest extends AbstractIntegrationTest {
         var f = setUp(PAST_START);
         var cycle = f.cycles().getFirst();
 
-        client.contribute(f.admin(), cycle.getId(), AMOUNT, f.admin().id(), newKey());
-        client.contribute(f.ada(), cycle.getId(), AMOUNT, f.ada().id(), newKey());
+        contributeBeneficiaryAndOneOther(f, cycle);
         client.payout(f.admin(), cycle.getId(), f.beneficiaryOf(cycle).id(), newKey());
 
         var claim = shortfallClaimRepository.findByCycleId(cycle.getId()).orElseThrow();
@@ -436,6 +435,13 @@ class PayoutTest extends AbstractIntegrationTest {
             payouts.add(new RecordedPayout(summary, key));
         }
         return payouts;
+    }
+
+    private void contributeBeneficiaryAndOneOther(Fixture f, Cycle cycle) throws Exception {
+        var beneficiary = f.beneficiaryOf(cycle);
+        var other = f.membersOtherThan(beneficiary).getFirst();
+        client.contribute(beneficiary, cycle.getId(), AMOUNT, beneficiary.id(), newKey());
+        client.contribute(other, cycle.getId(), AMOUNT, other.id(), newKey());
     }
 
     private void contributeAll(Fixture f, Cycle cycle) throws Exception {

@@ -1,7 +1,11 @@
 package com.theninjadev.ajoapi.payout;
 
+import com.theninjadev.ajoapi.ledger.EntryType;
+import com.theninjadev.ajoapi.ledger.LedgerAccounts;
 import com.theninjadev.ajoapi.ledger.LedgerService;
+import com.theninjadev.ajoapi.ledger.PostingLine;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
@@ -29,7 +33,39 @@ public class ShortfallDistributor {
     @Transactional(propagation = Propagation.MANDATORY)
     public Distribution distribute(List<ShortfallClaim> claims, long available,
                                    UUID fundedByCycleId, UUID poolAccountId, Instant now) {
-        // TODO: implemented by hand
-        throw new UnsupportedOperationException();
+        long remaining = available;
+        List<ShortfallClaim> settledClaims = new ArrayList<>();
+
+        for (ShortfallClaim claim : claims) {
+            if (remaining <= 0) break;
+
+            long outstanding = claim.getAmountKobo() - claim.getSettledAmountKobo();
+            long payment = Math.min(outstanding, remaining);
+
+            UUID settlementId = UUID.randomUUID();
+            UUID settlementTransactionId = ledgerService.post(
+                    EntryType.SHORTFALL_SETTLEMENT,
+                    settlementId,
+                    List.of(
+                            new PostingLine(LedgerAccounts.PLATFORM_CASH_ID, -payment),
+                            new PostingLine(poolAccountId, payment)));
+
+            shortfallSettlementRepository.save(ShortfallSettlement.builder()
+                    .id(settlementId)
+                    .claimId(claim.getId())
+                    .fundedByCycleId(fundedByCycleId)
+                    .amountKobo(payment)
+                    .ledgerTransactionId(settlementTransactionId)
+                    .createdAt(now)
+                    .build());
+
+            claim.settle(payment, now);
+            shortfallClaimRepository.save(claim);
+            settledClaims.add(claim);
+
+            remaining -= payment;
+        }
+
+        return new Distribution(remaining, settledClaims);
     }
 }

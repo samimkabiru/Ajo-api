@@ -91,8 +91,10 @@ class SettlementReadTest extends AbstractIntegrationTest {
         var cycle = f.cycles().getFirst();
         var beneficiary = f.beneficiaryOf(cycle);
 
-        // Two of three contribute, so the payout comes up one share short.
-        for (TestUser member : f.members().subList(0, 2)) {
+        // Two of three contribute, so the payout comes up one share short. The beneficiary
+        // is one of them: their own missing share would raise no claim.
+        var other = f.members().stream().filter(m -> !m.id().equals(beneficiary.id())).findFirst().orElseThrow();
+        for (TestUser member : List.of(beneficiary, other)) {
             client.contribute(member, cycle.getId(), AMOUNT, member.id(), UUID.randomUUID().toString());
         }
         client.payout(f.admin(), cycle.getId(), beneficiary.id(), UUID.randomUUID().toString());

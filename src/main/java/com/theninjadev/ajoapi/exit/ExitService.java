@@ -51,6 +51,7 @@ public class ExitService {
     private final Clock clock;
     private final PositionSwapRequestRepository swapRequestRepository;
     private final EntityManager entityManager;
+    private final ShortfallDistributor shortfallDistributor;
     private final ShortfallSettlementRepository shortfallSettlementRepository;
 
     @Transactional
@@ -491,37 +492,10 @@ public class ExitService {
         }
 
         // ---- Then the shortfall claims, oldest first.
-        List<ShortfallClaim> settledClaims = new ArrayList<>();
-
-        for (ShortfallClaim claim : shortfallClaimRepository.findOpenByRoundIdOldestFirst(roundId)) {
-            if (remaining <= 0) break;
-
-            long outstanding = claim.getAmountKobo() - claim.getSettledAmountKobo();
-            long payment = Math.min(outstanding, remaining);
-
-            UUID settlementId = UUID.randomUUID();
-            UUID settlementTransactionId = ledgerService.post(
-                    EntryType.SHORTFALL_SETTLEMENT,
-                    settlementId,
-                    List.of(
-                            new PostingLine(LedgerAccounts.PLATFORM_CASH_ID, -payment),
-                            new PostingLine(pool.getId(), payment)));
-
-            shortfallSettlementRepository.save(ShortfallSettlement.builder()
-                    .id(settlementId)
-                    .claimId(claim.getId())
-                    .fundedByCycleId(cycleId)
-                    .amountKobo(payment)
-                    .ledgerTransactionId(settlementTransactionId)
-                    .createdAt(now)
-                    .build());
-
-            claim.settle(payment, now);
-            shortfallClaimRepository.save(claim);
-            settledClaims.add(claim);
-
-            remaining -= payment;
-        }
+        Distribution distribution = shortfallDistributor.distribute(
+                shortfallClaimRepository.findOpenByRoundIdOldestFirst(roundId), remaining, cycleId, pool.getId(), now);
+        remaining = distribution.remaining();
+        List<ShortfallClaim> settledClaims = distribution.settled();
 
         // ---- SETTLED only when nothing is left open against this round.
         // Otherwise the cycle stays VACANT so a later pass can distribute more,

@@ -283,43 +283,8 @@ Deliberately excluded — do not add these:
 - When a schema change is needed, add a new migration. Never edit an
   existing one.
 
-## Open Questions 
-
-- Should `repay` be allowed on a COMPLETED round?
-- Should a round with open obligations be allowed to complete?
-- A round can't complete once a cycle is VACANT — allPaid needs to accept PAID or VACANT
-- `repay` requires an ACTIVE round, so a debt outlives the round but can't be settled after it
-- `cycleForBeneficiary` throws for a participant whose cycle was vacated
-
-### Open — arrears netting (slice 8b-iii)
-
-A participant who misses a contribution and later collects their own payout
-currently receives the full pot. The shortfall their absence caused is
-recorded as a claim against the cycle they underfunded, but nothing recovers
-it — the loss sits with whoever was underpaid in the month they missed.
-
-The fix belongs in PayoutService.payout, after the balance cap: withhold the
-beneficiary's arrears from what they collect, and use the withheld money to
-settle the claims those missed contributions caused.
-
-Arrears are NOT exposure. Exposure is negative for anyone who has not yet
-collected, so it cannot detect a missed contribution — a member who skipped
-month 1 and pays month 2 still has negative exposure when their turn arrives.
-Arrears are what they should have paid by this cycle minus what they have
-actually paid:
-
-> expected so far = (cycles due up to and including this one) x contribution amount arrears = max(0, expected so far - contributed)
-
-Withheld money is directed at the claims raised on the cycles the participant
-actually missed — found via the cycle ids they have not contributed to —
-rather than at the round's oldest open claims. The distribution loop itself is
-shared with vacant-cycle settlement (ShortfallDistributor).
-
-Deliberately deferred until after 8b-ii, because it introduces a second
-funding source for claims and the distribution logic should exist and be
-correct with one source first. Netting then reuses it.
-
-This is the strongest answer the system has to defaults: a member who misses
-payments before collecting carries almost no risk to the group, because their
-payout is held against what they owe. The risk case is missing payments
-*after* collecting, which is what exposure and the exit rules handle.
+- Arrears count only earlier cycles, as a set difference
+- A shortfall claim excludes the beneficiary's own missing contribution, and why
+- Withheld money never reaches the beneficiary's own claims
+- payouts.ledger_transaction_id is nullable — a fully withheld payout posts nothing
+- Payouts draw on the whole round pool, not a per-cycle pot. Known, deliberate, would require separating pools to change

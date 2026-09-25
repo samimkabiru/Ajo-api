@@ -51,7 +51,8 @@ public class Payout {
     @Column(name = "idempotency_key", nullable = false, length = 64)
     private String idempotencyKey;
 
-    @Column(name = "ledger_transaction_id", nullable = false)
+    /** Null when the whole payout was withheld for arrears: nothing was paid, so nothing was posted. */
+    @Column(name = "ledger_transaction_id")
     private UUID ledgerTransactionId;
 
     @Column(name = "created_at", nullable = false)
