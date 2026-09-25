@@ -334,6 +334,39 @@ public class GlobalExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
     }
 
+    // Two exceptions share this name — one per package — so both are fully qualified.
+    @ExceptionHandler(com.theninjadev.ajoapi.contribution.CycleAlreadySettledException.class)
+    public ProblemDetail handleCycleAlreadySettledForContribution(
+            com.theninjadev.ajoapi.contribution.CycleAlreadySettledException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(com.theninjadev.ajoapi.exit.CycleAlreadySettledException.class)
+    public ProblemDetail handleCycleAlreadySettledForSettlement(
+            com.theninjadev.ajoapi.exit.CycleAlreadySettledException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(CycleNotVacantException.class)
+    public ProblemDetail handleCycleNotVacant(CycleNotVacantException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(SettlementNotYetDueException.class)
+    public ProblemDetail handleSettlementNotYetDue(SettlementNotYetDueException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(NothingToSettleException.class)
+    public ProblemDetail handleNothingToSettle(NothingToSettleException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(RefundNotFoundException.class)
+    public ProblemDetail handleRefundNotFound(RefundNotFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ProblemDetail handleValidationFailure(MethodArgumentNotValidException e) {
         String detail = e.getBindingResult().getFieldErrors().stream()

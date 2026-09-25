@@ -14,5 +14,6 @@ public interface PayoutMapper {
 
     @Mapping(target = "id", source = "claim.id")
     @Mapping(target = "participant", source = "participant")
+    @Mapping(target = "outstandingKobo", expression = "java(claim.getAmountKobo() - claim.getSettledAmountKobo())")
     ShortfallClaimSummary toShortfallClaimSummary(ShortfallClaim claim, UserSummary participant);
 }

@@ -32,13 +32,20 @@ public class ShortfallClaim {
     @Column(name = "amount_kobo", nullable = false)
     private long amountKobo;
 
+    @Column(name = "settled_amount_kobo", nullable = false)
+    private long settledAmountKobo;
+
+    /** Set only once the claim is fully settled; a part-paid claim has a non-zero settledAmountKobo and no settledAt. */
     @Column(name = "settled_at")
     private Instant settledAt;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
-    public void settle(Instant settledAt) {
-        this.settledAt = settledAt;
+    /** Unguarded — the caller checks the arithmetic. */
+    public void settle(long additionalAmountKobo, Instant settledAt) {
+        this.settledAmountKobo += additionalAmountKobo;
+        if (this.settledAmountKobo == this.amountKobo)
+            this.settledAt = settledAt;
     }
 }

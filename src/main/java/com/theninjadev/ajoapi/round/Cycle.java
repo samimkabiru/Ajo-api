@@ -51,6 +51,10 @@ public class Cycle {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    /** The exit that left this cycle without a beneficiary; null unless vacated. */
+    @Column(name = "vacated_by_exit_id")
+    private UUID vacatedByExitId;
+
     public void open() {
         this.status = CycleStatus.OPEN;
     }
@@ -63,9 +67,14 @@ public class Cycle {
         this.beneficiaryId = participantId;
     }
 
-    /** Status and beneficiary change together so they can never drift apart. */
-    public void markVacant() {
+    /** Status, beneficiary and provenance change together so they can never drift apart. */
+    public void markVacant(UUID exitId) {
         this.status = CycleStatus.VACANT;
         this.beneficiaryId = null;
+        this.vacatedByExitId = exitId;
+    }
+
+    public void markSettled() {
+        this.status = CycleStatus.SETTLED;
     }
 }

@@ -96,11 +96,25 @@ class ExitTest extends AbstractIntegrationTest {
         var leaver = f.members().getFirst();
         UUID cycleId = cycleOf(f, leaver).getId();
 
-        requestExit(leaver, f.roundId());
+        var exit = requestExit(leaver, f.roundId());
 
         var cycle = cycleRepository.findById(cycleId).orElseThrow();
         assertThat(cycle.getStatus()).isEqualTo(CycleStatus.VACANT);
         assertThat(cycle.getBeneficiaryId()).isNull();
+        assertThat(cycle.getVacatedByExitId()).isEqualTo(exit.id());
+    }
+
+    @Test
+    void aCycleVacatedByAnExitIsFindableByIt() throws Exception {
+        var f = setUp();
+        var leaver = f.members().getFirst();
+        UUID cycleId = cycleOf(f, leaver).getId();
+
+        var exit = requestExit(leaver, f.roundId());
+
+        assertThat(cycleRepository.findByVacatedByExitId(exit.id()))
+                .map(Cycle::getId)
+                .contains(cycleId);
     }
 
     @Test

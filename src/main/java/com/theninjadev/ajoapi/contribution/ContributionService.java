@@ -135,6 +135,9 @@ public class ContributionService {
         if (cycle.getStatus() == CycleStatus.PAID)
             throw new CycleAlreadyPaidException();
 
+        if (cycle.getStatus() == CycleStatus.SETTLED)
+            throw new CycleAlreadySettledException();
+
         if (request.amountKobo() != round.getContributionAmountKobo())
             throw new IncorrectContributionAmountException();
 

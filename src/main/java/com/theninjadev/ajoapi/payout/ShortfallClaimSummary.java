@@ -10,6 +10,8 @@ public record ShortfallClaimSummary(
         UUID participantId,
         UserSummary participant,
         long amountKobo,
+        long settledAmountKobo,
+        long outstandingKobo,
         Instant settledAt,
         Instant createdAt
 ) {}

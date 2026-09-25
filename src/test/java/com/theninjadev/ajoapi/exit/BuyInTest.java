@@ -234,6 +234,18 @@ class BuyInTest extends AbstractIntegrationTest {
         assertThat(cycle.getBeneficiaryId()).isNotNull();
     }
 
+    @Test
+    void aBuyInLeavesVacatedByExitIdNull() throws Exception {
+        // The slot survives the exit, so no cycle was vacated and nothing points back at it.
+        var p = pendingExit();
+        var f = p.fixture();
+
+        buyIn(f.standby(), p.exitId(), f.standby().id(), AMOUNT);
+
+        assertThat(cycleRepository.findById(p.cycleId()).orElseThrow().getVacatedByExitId()).isNull();
+        assertThat(cycleRepository.findByVacatedByExitId(p.exitId())).isEmpty();
+    }
+
     // ------------------------------------------------------------------
     // Validation
     // ------------------------------------------------------------------

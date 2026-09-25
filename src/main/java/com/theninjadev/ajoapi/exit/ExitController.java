@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.exit;
 
+import com.theninjadev.ajoapi.payout.ShortfallClaimSummary;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -77,6 +78,31 @@ public class ExitController {
     @GetMapping("/exits/{exitId}/buy-in")
     public ResponseEntity<BuyInSummary> getBuyInForExit(@PathVariable UUID exitId) {
         return ResponseEntity.ok(exitService.getBuyInForExit(currentUserId(), exitId));
+    }
+
+    @PostMapping("/cycles/{cycleId}/settle")
+    public ResponseEntity<SettlementSummary> settleVacantCycle(@PathVariable UUID cycleId) {
+        return ResponseEntity.ok(exitService.settleVacantCycle(currentUserId(), cycleId));
+    }
+
+    @GetMapping("/cycles/{cycleId}/settlement")
+    public ResponseEntity<VacantCycleSummary> getVacantCycleStatus(@PathVariable UUID cycleId) {
+        return ResponseEntity.ok(exitService.getVacantCycleStatus(currentUserId(), cycleId));
+    }
+
+    @GetMapping("/rounds/{roundId}/refunds")
+    public ResponseEntity<List<RefundSummary>> listRefundsForRound(@PathVariable UUID roundId) {
+        return ResponseEntity.ok(exitService.listRefundsForRound(currentUserId(), roundId));
+    }
+
+    @GetMapping("/exits/{exitId}/refund")
+    public ResponseEntity<RefundSummary> getRefundForExit(@PathVariable UUID exitId) {
+        return ResponseEntity.ok(exitService.getRefundForExit(currentUserId(), exitId));
+    }
+
+    @GetMapping("/rounds/{roundId}/shortfall-claims/open")
+    public ResponseEntity<List<ShortfallClaimSummary>> listOpenShortfallClaims(@PathVariable UUID roundId) {
+        return ResponseEntity.ok(exitService.listOpenShortfallClaims(currentUserId(), roundId));
     }
 
     private UUID currentUserId() {

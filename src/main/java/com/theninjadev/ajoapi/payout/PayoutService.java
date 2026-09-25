@@ -227,7 +227,8 @@ public class PayoutService {
         boolean allSettled = cycleRepository.findByRoundIdOrderByCycleNumberAsc(round.getId())
                 .stream()
                 .allMatch(c -> c.getStatus() == CycleStatus.PAID
-                        || c.getStatus() == CycleStatus.VACANT);
+                        || c.getStatus() == CycleStatus.VACANT
+                        || c.getStatus() == CycleStatus.SETTLED);
 
         if (allSettled) {
             round.complete(now);

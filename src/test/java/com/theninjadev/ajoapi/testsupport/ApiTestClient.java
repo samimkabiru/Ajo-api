@@ -6,6 +6,8 @@ import com.theninjadev.ajoapi.contribution.ContributeRequest;
 import com.theninjadev.ajoapi.contribution.ContributionSummary;
 import com.theninjadev.ajoapi.exit.BuyInSummary;
 import com.theninjadev.ajoapi.exit.ExitRequestSummary;
+import com.theninjadev.ajoapi.exit.ExposureSummary;
+import com.theninjadev.ajoapi.exit.RefundSummary;
 import com.theninjadev.ajoapi.group.CreateGroupRequest;
 import com.theninjadev.ajoapi.group.GroupInviteSummary;
 import com.theninjadev.ajoapi.group.GroupSummary;
@@ -13,6 +15,7 @@ import com.theninjadev.ajoapi.group.InviteMemberRequest;
 import com.theninjadev.ajoapi.payout.PayoutMethod;
 import com.theninjadev.ajoapi.payout.PayoutRequest;
 import com.theninjadev.ajoapi.payout.PayoutSummary;
+import com.theninjadev.ajoapi.payout.ShortfallClaimSummary;
 import com.theninjadev.ajoapi.round.AddParticipantRequest;
 import com.theninjadev.ajoapi.round.CreateRoundRequest;
 import com.theninjadev.ajoapi.round.RoundDetail;
@@ -348,5 +351,57 @@ public class ApiTestClient {
                         .header("Authorization", "Bearer " + caller.accessToken()))
                 .andExpect(status().is(expectedStatus))
                 .andExpect(jsonPath("$.detail").value(expectedDetail));
+    }
+
+    // Settlement
+
+    public List<RefundSummary> listRefundsForRound(TestUser caller, UUID roundId) throws Exception {
+        var result = mockMvc.perform(get("/rounds/" + roundId + "/refunds")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().isOk())
+                .andReturn();
+        return List.of(objectMapper.readValue(result.getResponse().getContentAsString(), RefundSummary[].class));
+    }
+
+    public void listRefundsForRoundAndExpect(TestUser caller, UUID roundId, int expectedStatus) throws Exception {
+        mockMvc.perform(get("/rounds/" + roundId + "/refunds")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().is(expectedStatus));
+    }
+
+    public void getRefundForExitAndExpectDetail(TestUser caller, UUID exitId,
+                                                int expectedStatus, String expectedDetail) throws Exception {
+        mockMvc.perform(get("/exits/" + exitId + "/refund")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().is(expectedStatus))
+                .andExpect(jsonPath("$.detail").value(expectedDetail));
+    }
+
+    public List<ShortfallClaimSummary> listOpenShortfallClaims(TestUser caller, UUID roundId) throws Exception {
+        var result = mockMvc.perform(get("/rounds/" + roundId + "/shortfall-claims/open")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().isOk())
+                .andReturn();
+        return List.of(objectMapper.readValue(result.getResponse().getContentAsString(), ShortfallClaimSummary[].class));
+    }
+
+    public void listOpenShortfallClaimsAndExpect(TestUser caller, UUID roundId, int expectedStatus) throws Exception {
+        mockMvc.perform(get("/rounds/" + roundId + "/shortfall-claims/open")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().is(expectedStatus));
+    }
+
+    public void getVacantCycleStatusAndExpect(TestUser caller, UUID cycleId, int expectedStatus) throws Exception {
+        mockMvc.perform(get("/cycles/" + cycleId + "/settlement")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().is(expectedStatus));
+    }
+
+    public ExposureSummary getExposure(TestUser caller, UUID participantId) throws Exception {
+        var result = mockMvc.perform(get("/participants/" + participantId + "/exposure")
+                        .header("Authorization", "Bearer " + caller.accessToken()))
+                .andExpect(status().isOk())
+                .andReturn();
+        return objectMapper.readValue(result.getResponse().getContentAsString(), ExposureSummary.class);
     }
 }

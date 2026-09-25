@@ -4,5 +4,6 @@ public enum CycleStatus {
     SCHEDULED,
     OPEN,
     PAID,
-    VACANT
+    VACANT,
+    SETTLED
 }

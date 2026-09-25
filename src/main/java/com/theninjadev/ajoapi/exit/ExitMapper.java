@@ -19,4 +19,10 @@ public interface ExitMapper {
     @Mapping(target = "leaver", source = "leaver")
     @Mapping(target = "replacement", source = "replacement")
     BuyInSummary toBuyInSummary(BuyIn buyIn, UserSummary leaver, UserSummary replacement);
+
+    @Mapping(target = "id", source = "refund.id")
+    @Mapping(target = "recipient", source = "recipient")
+    @Mapping(target = "shortfallKobo",
+            expression = "java(refund.getExpectedAmountKobo() - refund.getActualAmountKobo())")
+    RefundSummary toRefundSummary(Refund refund, UserSummary recipient);
 }

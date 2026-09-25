@@ -5,12 +5,12 @@ import com.theninjadev.ajoapi.auth.UserMapper;
 import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.auth.UserSummary;
 import com.theninjadev.ajoapi.contribution.ContributionRepository;
+import com.theninjadev.ajoapi.contribution.CycleNotFoundException;
 import com.theninjadev.ajoapi.contribution.MissingIdempotencyKeyException;
 import com.theninjadev.ajoapi.contribution.RoundNotActiveException;
 import com.theninjadev.ajoapi.group.*;
 import com.theninjadev.ajoapi.ledger.*;
-import com.theninjadev.ajoapi.payout.Payout;
-import com.theninjadev.ajoapi.payout.PayoutRepository;
+import com.theninjadev.ajoapi.payout.*;
 import com.theninjadev.ajoapi.round.*;
 import com.theninjadev.ajoapi.swap.ParticipantNotActiveException;
 import com.theninjadev.ajoapi.swap.PositionSwapRequestRepository;
@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -33,6 +34,9 @@ public class ExitService {
     private final ExitRequestRepository exitRequestRepository;
     private final RepaymentRepository repaymentRepository;
     private final BuyInRepository buyInRepository;
+    private final RefundRepository refundRepository;
+    private final ShortfallClaimRepository shortfallClaimRepository;
+    private final PayoutMapper payoutMapper;
     private final RoundRepository roundRepository;
     private final RoundParticipantRepository roundParticipantRepository;
     private final CycleRepository cycleRepository;
@@ -47,6 +51,7 @@ public class ExitService {
     private final Clock clock;
     private final PositionSwapRequestRepository swapRequestRepository;
     private final EntityManager entityManager;
+    private final ShortfallSettlementRepository shortfallSettlementRepository;
 
     @Transactional
     public ExitRequestSummary requestExit(UUID callerId, UUID roundId) {
@@ -378,6 +383,165 @@ public class ExitService {
     }
 
     @Transactional
+    public SettlementSummary settleVacantCycle(UUID callerId, UUID cycleId) {
+
+        // Phase 1 — discovery, no locks.
+        UUID roundId;
+        {
+            Cycle discovered = cycleRepository.findById(cycleId)
+                    .orElseThrow(CycleNotFoundException::new);
+            Round round = getRoundOrThrow(discovered.getRoundId());
+
+            GroupMember caller = groupMemberRepository
+                    .findByGroupIdAndUserId(round.getGroupId(), callerId)
+                    .orElseThrow(NotGroupMemberException::new);
+            if (caller.getRole() != GroupRole.ADMIN)
+                throw new InsufficientRoleException();
+
+            roundId = round.getId();
+        }
+
+        entityManager.clear();
+
+        // Phase 2 — lock the cycle, then reload everything fresh.
+        Cycle cycle = cycleRepository.findAllByIdForUpdate(List.of(cycleId)).stream()
+                .findFirst()
+                .orElseThrow(CycleNotFoundException::new);
+        Round round = getRoundOrThrow(roundId);
+
+        if (cycle.getStatus() == CycleStatus.SETTLED)
+            throw new CycleAlreadySettledException();
+
+        if (cycle.getStatus() != CycleStatus.VACANT) {
+            // Not vacated yet: only valid if its beneficiary is on their way out.
+            if (cycle.getStatus() == CycleStatus.PAID || cycle.getBeneficiaryId() == null)
+                throw new CycleNotVacantException();
+
+            RoundParticipant beneficiary = roundParticipantRepository.findById(cycle.getBeneficiaryId())
+                    .orElseThrow(CycleNotVacantException::new);
+
+            ExitRequest openExit = exitRequestRepository
+                    .findByParticipantIdAndStatus(beneficiary.getId(), ExitStatus.PENDING_SETTLEMENT)
+                    .orElseThrow(CycleNotVacantException::new);
+
+            cycle.markVacant(openExit.getId());
+            cycleRepository.save(cycle);
+        }
+
+        if (LocalDate.now(clock).isBefore(cycle.getPayoutOn()))
+            throw new SettlementNotYetDueException();
+
+        long remaining = availableInPot(cycle);
+        if (remaining <= 0)
+            throw new NothingToSettleException();
+
+        LedgerAccount pool = ledgerAccountRepository
+                .findByAccountTypeAndOwnerId(AccountType.ROUND_POOL, roundId)
+                .orElseThrow(() -> new IllegalStateException("Round has no pool account"));
+
+        Instant now = Instant.now(clock);
+        long potGross = potOf(cycle);
+
+        // ---- The leaver's refund comes first: their money is why this pot exists.
+        RefundSummary refundSummary = null;
+        long refundOwed = refundOwedOf(cycle);
+
+        if (refundOwed > 0) {
+            long refundAmount = Math.min(refundOwed, remaining);
+
+            ExitRequest exit = exitRequestRepository.findById(cycle.getVacatedByExitId())
+                    .orElseThrow(() -> new IllegalStateException("Vacated cycle points at a missing exit"));
+            RoundParticipant leaverSlot = roundParticipantRepository.findById(exit.getParticipantId())
+                    .orElseThrow(() -> new IllegalStateException("Exiting participant not found"));
+
+            UUID refundId = UUID.randomUUID();
+            UUID refundTransactionId = ledgerService.post(
+                    EntryType.REFUND,
+                    refundId,
+                    List.of(
+                            new PostingLine(LedgerAccounts.PLATFORM_CASH_ID, -refundAmount),
+                            new PostingLine(pool.getId(), refundAmount)));
+
+            Refund refund = refundRepository.save(Refund.builder()
+                    .id(refundId)
+                    .cycleId(cycleId)
+                    .exitRequestId(exit.getId())
+                    .participantId(exit.getParticipantId())
+                    .userId(leaverSlot.getUserId())          // snapshot: the slot may move on later
+                    .expectedAmountKobo(refundOwed)
+                    .actualAmountKobo(refundAmount)
+                    .ledgerTransactionId(refundTransactionId)
+                    .createdAt(now)
+                    .build());
+
+            remaining -= refundAmount;
+
+            // Fully refunded means they are finally out. The cycle is already vacant,
+            // so completeExit is not the right path here.
+            if (refundAmount == refundOwed) {
+                exit.complete(now);
+                exitRequestRepository.save(exit);
+                leaverSlot.markExited();
+                roundParticipantRepository.save(leaverSlot);
+            }
+
+            User recipient = userRepository.findById(leaverSlot.getUserId())
+                    .orElseThrow(() -> new IllegalStateException("User not found"));
+            refundSummary = exitMapper.toRefundSummary(refund, userMapper.toSummary(recipient));
+        }
+
+        // ---- Then the shortfall claims, oldest first.
+        List<ShortfallClaim> settledClaims = new ArrayList<>();
+
+        for (ShortfallClaim claim : shortfallClaimRepository.findOpenByRoundIdOldestFirst(roundId)) {
+            if (remaining <= 0) break;
+
+            long outstanding = claim.getAmountKobo() - claim.getSettledAmountKobo();
+            long payment = Math.min(outstanding, remaining);
+
+            UUID settlementId = UUID.randomUUID();
+            UUID settlementTransactionId = ledgerService.post(
+                    EntryType.SHORTFALL_SETTLEMENT,
+                    settlementId,
+                    List.of(
+                            new PostingLine(LedgerAccounts.PLATFORM_CASH_ID, -payment),
+                            new PostingLine(pool.getId(), payment)));
+
+            shortfallSettlementRepository.save(ShortfallSettlement.builder()
+                    .id(settlementId)
+                    .claimId(claim.getId())
+                    .fundedByCycleId(cycleId)
+                    .amountKobo(payment)
+                    .ledgerTransactionId(settlementTransactionId)
+                    .createdAt(now)
+                    .build());
+
+            claim.settle(payment, now);
+            shortfallClaimRepository.save(claim);
+            settledClaims.add(claim);
+
+            remaining -= payment;
+        }
+
+        // ---- SETTLED only when nothing is left open against this round.
+        // Otherwise the cycle stays VACANT so a later pass can distribute more,
+        // and so it keeps accepting the contributions that fund it.
+        boolean nothingOutstanding = refundOwedOf(cycle) == 0
+                && shortfallClaimRepository.findOpenByRoundIdOldestFirst(roundId).isEmpty();
+
+        if (nothingOutstanding) {
+            cycle.markSettled();
+            cycleRepository.save(cycle);
+        }
+
+        List<ShortfallClaimSummary> claimSummaries = shortfallClaimSummaries(settledClaims);
+
+        return new SettlementSummary(
+                cycleId, potGross, refundSummary, claimSummaries, remaining,
+                cycleRepository.findById(cycleId).orElseThrow().getStatus());
+    }
+
+    @Transactional
     public ExitRequestSummary cancelExit(UUID callerId, UUID exitId) {
         ExitRequest exit = exitRequestRepository.findById(exitId)
                 .orElseThrow(ExitRequestNotFoundException::new);
@@ -450,6 +614,70 @@ public class ExitService {
         return buyInSummaries(List.of(buyIn)).getFirst();
     }
 
+    public List<RefundSummary> listRefundsForRound(UUID callerId, UUID roundId) {
+        Round round = getRoundOrThrow(roundId);
+        requireGroupMembership(round.getGroupId(), callerId);
+
+        List<UUID> cycleIds = cycleRepository.findByRoundIdOrderByCycleNumberAsc(roundId).stream()
+                .map(Cycle::getId)
+                .toList();
+
+        if (cycleIds.isEmpty())
+            return List.of();
+
+        return refundSummaries(refundRepository.findByCycleIdIn(cycleIds));
+    }
+
+    public RefundSummary getRefundForExit(UUID callerId, UUID exitId) {
+        ExitRequest exit = exitRequestRepository.findById(exitId)
+                .orElseThrow(ExitRequestNotFoundException::new);
+        Round round = getRoundOrThrow(exit.getRoundId());
+        requireGroupMembership(round.getGroupId(), callerId);
+
+        Refund refund = refundRepository.findByExitRequestId(exitId)
+                .orElseThrow(RefundNotFoundException::new);
+
+        return refundSummaries(List.of(refund)).getFirst();
+    }
+
+    /** Not-fully-settled claims, oldest first — the order a vacant pot pays them in. */
+    public List<ShortfallClaimSummary> listOpenShortfallClaims(UUID callerId, UUID roundId) {
+        Round round = getRoundOrThrow(roundId);
+        requireGroupMembership(round.getGroupId(), callerId);
+
+        return shortfallClaimSummaries(shortfallClaimRepository.findOpenByRoundIdOldestFirst(roundId));
+    }
+
+    public VacantCycleSummary getVacantCycleStatus(UUID callerId, UUID cycleId) {
+        Cycle cycle = cycleRepository.findById(cycleId).orElseThrow(CycleNotFoundException::new);
+        Round round = getRoundOrThrow(cycle.getRoundId());
+        requireGroupMembership(round.getGroupId(), callerId);
+
+        boolean beneficiaryIsLeaving = cycle.getBeneficiaryId() != null
+                && exitRequestRepository
+                .findByParticipantIdAndStatus(cycle.getBeneficiaryId(), ExitStatus.PENDING_SETTLEMENT)
+                .isPresent();
+
+        if (cycle.getStatus() != CycleStatus.VACANT
+                && cycle.getStatus() != CycleStatus.SETTLED
+                && !beneficiaryIsLeaving)
+            throw new CycleNotVacantException();
+
+        long pot = potOf(cycle);
+        long refundOwed = refundOwedOf(cycle);
+        long openClaims = shortfallClaimRepository.findOpenByRoundIdOldestFirst(round.getId()).stream()
+                .mapToLong(c -> c.getAmountKobo() - c.getSettledAmountKobo())
+                .sum();
+
+        // Mirrors settleVacantCycle's preconditions.
+        boolean readyToSettle = (cycle.getStatus() == CycleStatus.VACANT || beneficiaryIsLeaving)
+                && cycle.getStatus() != CycleStatus.PAID
+                && !LocalDate.now(clock).isBefore(cycle.getPayoutOn())
+                && pot > 0;
+
+        return new VacantCycleSummary(cycleId, pot, refundOwed, openClaims, readyToSettle);
+    }
+
     private Optional<Cycle> cycleForBeneficiary(UUID roundId, UUID participantId) {
         return cycleRepository.findByRoundIdOrderByCycleNumberAsc(roundId).stream()
                 .filter(c -> participantId.equals(c.getBeneficiaryId()))
@@ -474,7 +702,7 @@ public class ExitService {
 
         // Null when the participant's cycle was already vacated — nothing left to vacate.
         if (lockedCycle != null && lockedCycle.getStatus() != CycleStatus.PAID) {
-            lockedCycle.markVacant();
+            lockedCycle.markVacant(exit.getId());
             cycleRepository.save(lockedCycle);
         }
 
@@ -493,8 +721,39 @@ public class ExitService {
 
         long contributed = contributionRepository.sumAmountKoboByParticipantId(participantId);
         long repaid = repaymentRepository.sumAmountKoboByParticipantId(participantId);
+        long refunded = refundRepository.sumActualAmountKoboByParticipantId(participantId);
+        long claimsSettled = shortfallSettlementRepository.sumAmountKoboByClaimParticipantId(participantId);
 
-        return collected - contributed - repaid;
+        return collected + refunded + claimsSettled - contributed - repaid;
+    }
+
+    long potOf(Cycle cycle) {
+        // What came in for this cycle specifically — not the pool balance,
+        // which mixes every cycle in the round together.
+        return contributionRepository.sumAmountKoboByCycleId(cycle.getId());
+    }
+
+    /** The pot minus everything already paid out of it. Settlement can run repeatedly. */
+    private long availableInPot(Cycle cycle) {
+        long refunded = refundRepository.findByCycleId(cycle.getId()).stream()
+                .mapToLong(Refund::getActualAmountKobo)
+                .sum();
+        long distributed = shortfallSettlementRepository.sumAmountKoboByFundedByCycleId(cycle.getId());
+
+        return potOf(cycle) - refunded - distributed;
+    }
+
+    long refundOwedOf(Cycle cycle) {
+        if (cycle.getVacatedByExitId() == null)
+            return 0;
+        if (refundRepository.existsByExitRequestId(cycle.getVacatedByExitId()))
+            return 0;
+
+        ExitRequest exit = exitRequestRepository.findById(cycle.getVacatedByExitId())
+                .orElseThrow(() -> new IllegalStateException("Vacated cycle points at a missing exit"));
+
+        long exposure = exposureOf(exit.getParticipantId());
+        return exposure < 0 ? -exposure : 0;     // negative exposure is money owed to them
     }
 
     private List<ExitRequestSummary> exitRequestSummaries(List<ExitRequest> exits) {
@@ -544,6 +803,33 @@ public class ExitService {
         return buyIns.stream()
                 .map(b -> exitMapper.toBuyInSummary(
                         b, usersById.get(b.getLeaverUserId()), usersById.get(b.getReplacementUserId())))
+                .toList();
+    }
+
+    /** Recipient comes from the snapshotted userId, never the participant. One user query. */
+    private List<RefundSummary> refundSummaries(List<Refund> refunds) {
+        if (refunds.isEmpty())
+            return List.of();
+
+        Map<UUID, UserSummary> usersById = userRepository.findAllById(
+                        refunds.stream().map(Refund::getUserId).collect(Collectors.toSet()))
+                .stream()
+                .collect(Collectors.toMap(User::getId, userMapper::toSummary));
+
+        return refunds.stream()
+                .map(r -> exitMapper.toRefundSummary(r, usersById.get(r.getUserId())))
+                .toList();
+    }
+
+    private List<ShortfallClaimSummary> shortfallClaimSummaries(List<ShortfallClaim> claims) {
+        if (claims.isEmpty())
+            return List.of();
+
+        Map<UUID, UserSummary> usersByParticipantId =
+                userSummariesByParticipantId(claims.stream().map(ShortfallClaim::getParticipantId).toList());
+
+        return claims.stream()
+                .map(c -> payoutMapper.toShortfallClaimSummary(c, usersByParticipantId.get(c.getParticipantId())))
                 .toList();
     }
 

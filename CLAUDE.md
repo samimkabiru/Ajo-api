@@ -230,7 +230,11 @@ A participant who misses a month's contribution stays ACTIVE — this is not an 
 
 - Idempotency checks sit before round-status guards, and why (the final-payout retry)
 - A reused key against a different cycle is a 409, not a silent return
-- Payout amounts are never client-supplied
+- Payout amounts are never client-supplied.
+
+- Cycles vacate lazily, at settlement — and why (the deadlock above). This replaces the earlier "cycles are only touched at completion" rule for the owed-money case.
+- Exposure is `collected + refunded + claimsSettled − contributed − repaid`. All four terms matter; dropping one makes someone read as owed forever.
+- A cycle reaches SETTLED only when nothing is outstanding round-wide, not when its pot is exhausted.
 
 ## Slice order
 
@@ -286,3 +290,27 @@ Deliberately excluded — do not add these:
 - A round can't complete once a cycle is VACANT — allPaid needs to accept PAID or VACANT
 - `repay` requires an ACTIVE round, so a debt outlives the round but can't be settled after it
 - `cycleForBeneficiary` throws for a participant whose cycle was vacated
+
+### Open — arrears netting (slice 8b-iii)
+
+A participant who misses a contribution and later collects their own payout
+currently receives the full pot. Their arrears are recorded — exposure shows
+them, and a shortfall claim exists against the cycle they underfunded — but
+nothing recovers the money automatically. The loss sits with whoever was
+underpaid in the month they missed.
+
+The fix belongs in PayoutService.payout, after the balance cap:
+
+    long arrears = Math.max(0, exposureOf(beneficiaryParticipantId));
+    long actual = Math.min(expected, poolBalance) - arrears;
+
+The withheld amount then settles open shortfall claims instead of staying in
+the pool.
+
+Deliberately deferred until after 8b-ii, because it introduces a second
+funding source for claims and the distribution logic should exist and be
+correct with one source first. Netting then reuses it.
+
+This is the strongest answer the system has to defaults: a member who misses
+payments before collecting carries almost no risk to the group, because their
+payout is held against what they owe.
