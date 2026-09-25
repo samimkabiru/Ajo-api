@@ -20,6 +20,13 @@ public interface ContributionRepository extends JpaRepository<Contribution, UUID
 
     boolean existsByCycleIdAndParticipantId(UUID cycleId, UUID participantId);
 
+    /** A participant row belongs to one round, so this is already scoped to that round. */
+    @Query("""
+            select c.cycleId from Contribution c
+            where c.participantId = :participantId
+            """)
+    List<UUID> findContributedCycleIdsByParticipantId(@Param("participantId") UUID participantId);
+
     @Query("select coalesce(sum(c.amountKobo), 0) from Contribution c where c.cycleId = :cycleId")
     long sumAmountKoboByCycleId(@Param("cycleId") UUID cycleId);
 

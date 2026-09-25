@@ -37,6 +37,10 @@ public class Payout {
     @Column(name = "actual_amount_kobo", nullable = false)
     private long actualAmountKobo;
 
+    /** The beneficiary's own arrears, held back from this payout to settle the claims they caused. */
+    @Column(name = "arrears_withheld_kobo", nullable = false)
+    private long arrearsWithheldKobo;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "method", nullable = false, length = 16)
     private PayoutMethod method;

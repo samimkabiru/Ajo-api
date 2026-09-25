@@ -10,6 +10,7 @@ public interface PayoutMapper {
     @Mapping(target = "id", source = "payout.id")
     @Mapping(target = "beneficiary", source = "beneficiary")
     @Mapping(target = "shortfallKobo", source = "shortfallKobo")
+    @Mapping(target = "arrearsWithheldKobo", source = "payout.arrearsWithheldKobo")
     PayoutSummary toPayoutSummary(Payout payout, UserSummary beneficiary, long shortfallKobo);
 
     @Mapping(target = "id", source = "claim.id")

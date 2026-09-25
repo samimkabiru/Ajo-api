@@ -294,18 +294,26 @@ Deliberately excluded — do not add these:
 ### Open — arrears netting (slice 8b-iii)
 
 A participant who misses a contribution and later collects their own payout
-currently receives the full pot. Their arrears are recorded — exposure shows
-them, and a shortfall claim exists against the cycle they underfunded — but
-nothing recovers the money automatically. The loss sits with whoever was
-underpaid in the month they missed.
+currently receives the full pot. The shortfall their absence caused is
+recorded as a claim against the cycle they underfunded, but nothing recovers
+it — the loss sits with whoever was underpaid in the month they missed.
 
-The fix belongs in PayoutService.payout, after the balance cap:
+The fix belongs in PayoutService.payout, after the balance cap: withhold the
+beneficiary's arrears from what they collect, and use the withheld money to
+settle the claims those missed contributions caused.
 
-    long arrears = Math.max(0, exposureOf(beneficiaryParticipantId));
-    long actual = Math.min(expected, poolBalance) - arrears;
+Arrears are NOT exposure. Exposure is negative for anyone who has not yet
+collected, so it cannot detect a missed contribution — a member who skipped
+month 1 and pays month 2 still has negative exposure when their turn arrives.
+Arrears are what they should have paid by this cycle minus what they have
+actually paid:
 
-The withheld amount then settles open shortfall claims instead of staying in
-the pool.
+> expected so far = (cycles due up to and including this one) x contribution amount arrears = max(0, expected so far - contributed)
+
+Withheld money is directed at the claims raised on the cycles the participant
+actually missed — found via the cycle ids they have not contributed to —
+rather than at the round's oldest open claims. The distribution loop itself is
+shared with vacant-cycle settlement (ShortfallDistributor).
 
 Deliberately deferred until after 8b-ii, because it introduces a second
 funding source for claims and the distribution logic should exist and be
@@ -313,4 +321,5 @@ correct with one source first. Netting then reuses it.
 
 This is the strongest answer the system has to defaults: a member who misses
 payments before collecting carries almost no risk to the group, because their
-payout is held against what they owe.
+payout is held against what they owe. The risk case is missing payments
+*after* collecting, which is what exposure and the exit rules handle.

@@ -12,6 +12,7 @@ public record PayoutSummary(
         long expectedAmountKobo,
         long actualAmountKobo,
         long shortfallKobo,
+        long arrearsWithheldKobo,
         PayoutMethod method,
         UUID recordedBy,
         UUID ledgerTransactionId,

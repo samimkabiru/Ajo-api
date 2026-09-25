@@ -25,4 +25,12 @@ public interface ShortfallClaimRepository extends JpaRepository<ShortfallClaim, 
         ORDER BY sc.createdAt ASC
         """)
     List<ShortfallClaim> findOpenByRoundIdOldestFirst(@Param("roundId") UUID roundId);
+
+    /** Not fully settled among the given cycles, oldest first — the claims a member's missed contributions caused. */
+    @Query("""
+        SELECT sc FROM ShortfallClaim sc
+        WHERE sc.cycleId IN :cycleIds AND sc.settledAmountKobo < sc.amountKobo
+        ORDER BY sc.createdAt ASC
+        """)
+    List<ShortfallClaim> findOpenByCycleIdsOldestFirst(@Param("cycleIds") Collection<UUID> cycleIds);
 }

@@ -4,6 +4,7 @@ import com.theninjadev.ajoapi.auth.User;
 import com.theninjadev.ajoapi.auth.UserMapper;
 import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.auth.UserSummary;
+import com.theninjadev.ajoapi.contribution.ContributionRepository;
 import com.theninjadev.ajoapi.contribution.CycleNotFoundException;
 import com.theninjadev.ajoapi.contribution.MissingIdempotencyKeyException;
 import com.theninjadev.ajoapi.contribution.RoundNotActiveException;
@@ -46,6 +47,8 @@ public class PayoutService {
     private final LedgerAccountRepository ledgerAccountRepository;
     private final Clock clock;
     private final PositionSwapRequestRepository swapRequestRepository;
+    private final ContributionRepository contributionRepository;
+    private final ShortfallSettlementRepository shortfallSettlementRepository;
 
     public List<PayoutSummary> listForRound(UUID callerId, UUID roundId) {
         Round round = getRoundOrThrow(roundId);
@@ -238,6 +241,12 @@ public class PayoutService {
                 .orElseThrow(() -> new IllegalStateException("User not found"));
 
         return payoutMapper.toPayoutSummary(payout, userMapper.toSummary(beneficiaryUser), expected - actual);
+    }
+
+    /** What this participant should have paid by the given cycle, minus what they have paid. */
+    long arrearsOf(UUID participantId, Cycle cycle) {
+        // TODO: implemented by hand
+        throw new UnsupportedOperationException();
     }
 
     private List<PayoutSummary> payoutSummaries(List<Payout> payouts) {
