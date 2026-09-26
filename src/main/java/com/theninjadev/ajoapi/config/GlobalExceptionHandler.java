@@ -434,6 +434,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, e.getMessage());
     }
 
+    // ---- Password reset: one outcome for every failure, so it reveals nothing about accounts.
+
+    @ExceptionHandler(com.theninjadev.ajoapi.verification.PasswordResetFailedException.class)
+    public ProblemDetail handlePasswordResetFailed(com.theninjadev.ajoapi.verification.PasswordResetFailedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
     // ---- Validation: a readable detail plus one entry per field.
 
     @Override

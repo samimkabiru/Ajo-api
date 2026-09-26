@@ -51,4 +51,10 @@ public class User {
         this.phoneVerified = true;
         this.updatedAt = verifiedAt;
     }
+
+    /** Takes an already-encoded hash; never a raw password. */
+    public void changePassword(String newPasswordHash, Instant changedAt) {
+        this.passwordHash = newPasswordHash;
+        this.updatedAt = changedAt;
+    }
 }
