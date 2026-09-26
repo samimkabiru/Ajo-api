@@ -1,8 +1,10 @@
 package com.theninjadev.ajoapi.group;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.auth.AuthResponse;
 import com.theninjadev.ajoapi.auth.RegisterRequest;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
+import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +31,9 @@ class GroupControllerTest extends AbstractIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private UserRepository userRepository;
+
     private record TestUser(UUID id, String phone, String accessToken) {}
 
     private TestUser registerUser(String rawPhone, String fullName) throws Exception {
@@ -40,6 +45,12 @@ class GroupControllerTest extends AbstractIntegrationTest {
                 .andReturn();
         AuthResponse response = objectMapper.readValue(
                 result.getResponse().getContentAsString(), AuthResponse.class);
+
+        // Verified directly, as ApiTestClient does: this test is about groups, not verification.
+        var user = userRepository.findById(response.user().id()).orElseThrow();
+        user.markPhoneVerified(Instant.now());
+        userRepository.save(user);
+
         return new TestUser(response.user().id(), response.user().phone(), response.accessToken());
     }
 

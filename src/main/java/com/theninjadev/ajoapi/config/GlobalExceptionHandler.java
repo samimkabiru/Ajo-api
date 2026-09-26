@@ -20,6 +20,14 @@ import com.theninjadev.ajoapi.ledger.IdempotencyKeyReusedException;
 import com.theninjadev.ajoapi.payout.*;
 import com.theninjadev.ajoapi.round.*;
 import com.theninjadev.ajoapi.swap.*;
+import com.theninjadev.ajoapi.verification.InvalidVerificationCodeException;
+import com.theninjadev.ajoapi.verification.NoActiveVerificationCodeException;
+import com.theninjadev.ajoapi.verification.PhoneAlreadyVerifiedException;
+import com.theninjadev.ajoapi.verification.PhoneNotVerifiedException;
+import com.theninjadev.ajoapi.verification.TooManyVerificationAttemptsException;
+import com.theninjadev.ajoapi.verification.TooManyVerificationRequestsException;
+import com.theninjadev.ajoapi.verification.VerificationCodeExpiredException;
+import com.theninjadev.ajoapi.verification.VerificationResendTooSoonException;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
@@ -382,6 +390,48 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(RefundNotFoundException.class)
     public ProblemDetail handleRefundNotFound(RefundNotFoundException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    // ---- Phone verification
+
+    @ExceptionHandler(PhoneAlreadyVerifiedException.class)
+    public ProblemDetail handlePhoneAlreadyVerified(PhoneAlreadyVerifiedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(NoActiveVerificationCodeException.class)
+    public ProblemDetail handleNoActiveVerificationCode(NoActiveVerificationCodeException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(InvalidVerificationCodeException.class)
+    public ProblemDetail handleInvalidVerificationCode(InvalidVerificationCodeException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(VerificationCodeExpiredException.class)
+    public ProblemDetail handleVerificationCodeExpired(VerificationCodeExpiredException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.GONE, e.getMessage());
+    }
+
+    @ExceptionHandler(TooManyVerificationAttemptsException.class)
+    public ProblemDetail handleTooManyVerificationAttempts(TooManyVerificationAttemptsException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+    }
+
+    @ExceptionHandler(TooManyVerificationRequestsException.class)
+    public ProblemDetail handleTooManyVerificationRequests(TooManyVerificationRequestsException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+    }
+
+    @ExceptionHandler(VerificationResendTooSoonException.class)
+    public ProblemDetail handleVerificationResendTooSoon(VerificationResendTooSoonException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+    }
+
+    @ExceptionHandler(PhoneNotVerifiedException.class)
+    public ProblemDetail handlePhoneNotVerified(PhoneNotVerifiedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, e.getMessage());
     }
 
     // ---- Validation: a readable detail plus one entry per field.

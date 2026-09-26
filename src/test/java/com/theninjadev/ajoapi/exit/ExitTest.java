@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.exit;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.ledger.LedgerEntry;
 import com.theninjadev.ajoapi.ledger.LedgerEntryRepository;
 import com.theninjadev.ajoapi.payout.PayoutMethod;
@@ -42,6 +43,7 @@ class ExitTest extends AbstractIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UserRepository userRepository;
     @Autowired private CycleRepository cycleRepository;
     @Autowired private RoundParticipantRepository roundParticipantRepository;
     @Autowired private ExitRequestRepository exitRequestRepository;
@@ -54,7 +56,7 @@ class ExitTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUpClient() {
-        client = new ApiTestClient(mockMvc, objectMapper);
+        client = new ApiTestClient(mockMvc, objectMapper, userRepository);
     }
 
     private record Fixture(UUID roundId,

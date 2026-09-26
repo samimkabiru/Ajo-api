@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.payout;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.contribution.Contribution;
 import com.theninjadev.ajoapi.contribution.ContributionRepository;
 import com.theninjadev.ajoapi.ledger.AccountType;
@@ -47,6 +48,7 @@ class PayoutTest extends AbstractIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UserRepository userRepository;
     @Autowired private CycleRepository cycleRepository;
     @Autowired private RoundRepository roundRepository;
     @Autowired private PayoutRepository payoutRepository;
@@ -60,7 +62,7 @@ class PayoutTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUpClient() {
-        client = new ApiTestClient(mockMvc, objectMapper);
+        client = new ApiTestClient(mockMvc, objectMapper, userRepository);
     }
 
     private record Fixture(UUID roundId,

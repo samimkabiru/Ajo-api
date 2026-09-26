@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.swap;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.contribution.Contribution;
 import com.theninjadev.ajoapi.contribution.ContributionRepository;
 import com.theninjadev.ajoapi.payout.Payout;
@@ -47,6 +48,7 @@ class SwapAcceptTest extends AbstractIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UserRepository userRepository;
     @Autowired private CycleRepository cycleRepository;
     @Autowired private RoundParticipantRepository roundParticipantRepository;
     @Autowired private PositionSwapRequestRepository swapRequestRepository;
@@ -57,7 +59,7 @@ class SwapAcceptTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUpClient() {
-        client = new ApiTestClient(mockMvc, objectMapper);
+        client = new ApiTestClient(mockMvc, objectMapper, userRepository);
     }
 
     /** Four members in a group's first round — everyone is a newcomer, so every swap is permitted. */

@@ -2,6 +2,7 @@ package com.theninjadev.ajoapi.testsupport;
 
 import com.theninjadev.ajoapi.auth.AuthResponse;
 import com.theninjadev.ajoapi.auth.RegisterRequest;
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.contribution.ContributeRequest;
 import com.theninjadev.ajoapi.contribution.ContributionSummary;
 import com.theninjadev.ajoapi.exit.BuyInSummary;
@@ -26,6 +27,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -50,10 +52,22 @@ public class ApiTestClient {
 
     private final MockMvc mockMvc;
     private final ObjectMapper objectMapper;
+    private final UserRepository userRepository;   // null: fixtures stay unverified
 
-    public ApiTestClient(MockMvc mockMvc, ObjectMapper objectMapper) {
+    /**
+     * Fixtures registered through this client have their phone verified directly in the
+     * database, so unrelated tests stay fast and never send an SMS. The real verification flow
+     * is covered in PhoneVerificationTest.
+     */
+    public ApiTestClient(MockMvc mockMvc, ObjectMapper objectMapper, UserRepository userRepository) {
         this.mockMvc = mockMvc;
         this.objectMapper = objectMapper;
+        this.userRepository = userRepository;
+    }
+
+    /** For tests that need an unverified user: fixtures are registered but not verified. */
+    public ApiTestClient(MockMvc mockMvc, ObjectMapper objectMapper) {
+        this(mockMvc, objectMapper, null);
     }
 
     // Auth and groups
@@ -68,6 +82,13 @@ public class ApiTestClient {
                 .andReturn();
         AuthResponse response = objectMapper.readValue(
                 result.getResponse().getContentAsString(), AuthResponse.class);
+
+        if (userRepository != null) {
+            var user = userRepository.findById(response.user().id()).orElseThrow();
+            user.markPhoneVerified(Instant.now());
+            userRepository.save(user);
+        }
+
         return new TestUser(response.user().id(), response.user().phone(), response.accessToken());
     }
 

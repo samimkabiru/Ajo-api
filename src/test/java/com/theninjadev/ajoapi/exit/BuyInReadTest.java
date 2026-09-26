@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.exit;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.round.CycleRepository;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
 import com.theninjadev.ajoapi.testsupport.ApiTestClient;
@@ -27,13 +28,14 @@ class BuyInReadTest extends AbstractIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UserRepository userRepository;
     @Autowired private CycleRepository cycleRepository;
 
     private ApiTestClient client;
 
     @BeforeEach
     void setUpClient() {
-        client = new ApiTestClient(mockMvc, objectMapper);
+        client = new ApiTestClient(mockMvc, objectMapper, userRepository);
     }
 
     private record Fixture(UUID roundId, TestUser admin, TestUser ada, TestUser eze) {}

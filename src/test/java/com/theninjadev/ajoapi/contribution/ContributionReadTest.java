@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.contribution;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
 import com.theninjadev.ajoapi.testsupport.ApiTestClient;
 import com.theninjadev.ajoapi.testsupport.TestUser;
@@ -27,11 +28,14 @@ class ContributionReadTest extends AbstractIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private UserRepository userRepository;
+
     private ApiTestClient client;
 
     @BeforeEach
     void setUpClient() {
-        client = new ApiTestClient(mockMvc, objectMapper);
+        client = new ApiTestClient(mockMvc, objectMapper, userRepository);
     }
 
     private record ActivatedSetup(UUID roundId, UUID cycleId, TestUser admin, TestUser ada, TestUser eze) {}

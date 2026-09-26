@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.round;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.ledger.AccountType;
 import com.theninjadev.ajoapi.ledger.LedgerAccount;
 import com.theninjadev.ajoapi.ledger.LedgerAccountRepository;
@@ -42,11 +43,14 @@ public class RoundActivationTest extends AbstractIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private UserRepository userRepository;
+
     private ApiTestClient client;
 
     @BeforeEach
     void setUpClient() {
-        client = new ApiTestClient(mockMvc, objectMapper);
+        client = new ApiTestClient(mockMvc, objectMapper, userRepository);
     }
 
     @Autowired

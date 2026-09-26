@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.config;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
 import com.theninjadev.ajoapi.testsupport.ApiTestClient;
 import com.theninjadev.ajoapi.testsupport.TestUser;
@@ -54,12 +55,13 @@ class ErrorResponseShapeTest extends AbstractIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UserRepository userRepository;
 
     private ApiTestClient client;
 
     @BeforeEach
     void setUpClient() {
-        client = new ApiTestClient(mockMvc, objectMapper);
+        client = new ApiTestClient(mockMvc, objectMapper, userRepository);
     }
 
     @Test

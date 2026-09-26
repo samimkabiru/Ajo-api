@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.contribution;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.ledger.*;
 import com.theninjadev.ajoapi.round.*;
 import com.theninjadev.ajoapi.testsupport.AbstractIntegrationTest;
@@ -40,11 +41,14 @@ public class ContributionTest extends AbstractIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private UserRepository userRepository;
+
     private ApiTestClient client;
 
     @BeforeEach
     void setUpClient() {
-        client = new ApiTestClient(mockMvc, objectMapper);
+        client = new ApiTestClient(mockMvc, objectMapper, userRepository);
     }
 
     @Autowired

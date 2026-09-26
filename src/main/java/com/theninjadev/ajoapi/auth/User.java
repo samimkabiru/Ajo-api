@@ -46,4 +46,9 @@ public class User {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    public void markPhoneVerified(Instant verifiedAt) {
+        this.phoneVerified = true;
+        this.updatedAt = verifiedAt;
+    }
 }

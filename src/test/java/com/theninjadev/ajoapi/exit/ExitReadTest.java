@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.exit;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.round.ParticipantStatus;
 import com.theninjadev.ajoapi.round.ParticipantSummary;
 import com.theninjadev.ajoapi.round.RoundParticipantRepository;
@@ -37,6 +38,7 @@ class ExitReadTest extends AbstractIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UserRepository userRepository;
     @Autowired private ExitRequestRepository exitRequestRepository;
     @Autowired private RoundParticipantRepository roundParticipantRepository;
     @Autowired private Clock clock;
@@ -45,7 +47,7 @@ class ExitReadTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void setUpClient() {
-        client = new ApiTestClient(mockMvc, objectMapper);
+        client = new ApiTestClient(mockMvc, objectMapper, userRepository);
     }
 
     private record Fixture(UUID roundId, TestUser admin, TestUser ada, TestUser eze,

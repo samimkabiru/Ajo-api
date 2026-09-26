@@ -4,6 +4,7 @@ import com.theninjadev.ajoapi.auth.PhoneNumberNormalizer;
 import com.theninjadev.ajoapi.auth.User;
 import com.theninjadev.ajoapi.auth.UserMapper;
 import com.theninjadev.ajoapi.auth.UserRepository;
+import com.theninjadev.ajoapi.verification.PhoneNotVerifiedException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -11,6 +12,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 import lombok.AllArgsConstructor;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +31,7 @@ public class GroupService {
 
     @Transactional
     public GroupSummary createGroup(UUID callerId, CreateGroupRequest request) {
+        requireVerifiedPhone(callerId);
         Instant now = Instant.now(clock);
 
         Group group = groupRepository.save(Group.builder()
@@ -118,6 +121,7 @@ public class GroupService {
 
     @Transactional
     public GroupMemberSummary acceptInvite(UUID callerId, UUID inviteId) {
+        requireVerifiedPhone(callerId);
         GroupInvite invite = groupInviteRepository.findById(inviteId).orElseThrow(InviteNotFoundException::new);
         User caller = getCallerOrThrow(callerId);
         requireInvitee(invite, caller);
@@ -243,6 +247,18 @@ public class GroupService {
     private void requireInvitee(GroupInvite invite, User caller) {
         if (!invite.getPhone().equals(caller.getPhone()))
             throw new InviteNotFoundException();
+    }
+
+    /**
+     * Creating or joining a group needs a verified phone. Only createGroup and acceptInvite call
+     * this: inviting stays open, since the invitee may not even have an account yet.
+     */
+    private void requireVerifiedPhone(UUID userId) {
+        User user = userRepository.findById(userId)
+                // A valid token for a user who no longer exists is an invalid token: 401, as on GET /me.
+                .orElseThrow(() -> new InsufficientAuthenticationException("Authenticated user no longer exists"));
+        if (!user.isPhoneVerified())
+            throw new PhoneNotVerifiedException();
     }
 
     private User getCallerOrThrow(UUID callerId) {

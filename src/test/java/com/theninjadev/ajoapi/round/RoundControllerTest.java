@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.round;
 
+import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.auth.AuthResponse;
 import com.theninjadev.ajoapi.auth.RegisterRequest;
 import com.theninjadev.ajoapi.group.CreateGroupRequest;
@@ -36,6 +37,9 @@ class RoundControllerTest extends AbstractIntegrationTest {
     private ObjectMapper objectMapper;
 
     @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
     private RoundRepository roundRepository;
 
     private record TestUser(UUID id, String phone, String accessToken) {}
@@ -49,6 +53,12 @@ class RoundControllerTest extends AbstractIntegrationTest {
                 .andReturn();
         AuthResponse response = objectMapper.readValue(
                 result.getResponse().getContentAsString(), AuthResponse.class);
+
+        // Verified directly, as ApiTestClient does: this test is about groups, not verification.
+        var user = userRepository.findById(response.user().id()).orElseThrow();
+        user.markPhoneVerified(Instant.now());
+        userRepository.save(user);
+
         return new TestUser(response.user().id(), response.user().phone(), response.accessToken());
     }
 
