@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -28,6 +29,9 @@ class AuthServiceTest extends AbstractIntegrationTest {
 
     @Autowired
     private Clock clock;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
     @Test
     void registerPersistsNormalizedPhone() {
@@ -126,6 +130,52 @@ class AuthServiceTest extends AbstractIntegrationTest {
     @Test
     void logoutWithUnknownTokenSucceedsSilently() {
         authService.logout("not-a-real-token");
+    }
+
+    // ---- Stored user
+
+    @Test
+    void registeredUserStartsWithPhoneNotVerified() {
+        var tokens = authService.register(registerRequest("08012346001", "password123", null));
+
+        var saved = userRepository.findById(tokens.user().getId()).orElseThrow();
+        assertThat(saved.isPhoneVerified()).isFalse();
+    }
+
+    @Test
+    void storedPasswordIsABcryptHashOfTheRawPassword() {
+        var tokens = authService.register(registerRequest("08012346002", "correct-horse-9", null));
+
+        var hash = userRepository.findById(tokens.user().getId()).orElseThrow().getPasswordHash();
+        assertThat(hash).startsWith("$2").doesNotContain("correct-horse-9");
+        assertThat(passwordEncoder.matches("correct-horse-9", hash)).isTrue();
+    }
+
+    // ---- Email normalisation
+
+    @Test
+    void emailIsTrimmedAndLowercasedBeforeSaving() {
+        var tokens = authService.register(registerRequest("08012346003", "password123", "  Mixed.Case@Example.COM "));
+
+        assertThat(userRepository.findById(tokens.user().getId()).orElseThrow().getEmail())
+                .isEqualTo("mixed.case@example.com");
+    }
+
+    @Test
+    void emailsDifferingOnlyByCaseAreTheSameAddress() {
+        authService.register(registerRequest("08012346004", "password123", "Ada.Service@X.com"));
+
+        assertThrows(DuplicateEmailException.class,
+                () -> authService.register(registerRequest("08012346005", "password123", "ada.service@x.com")));
+    }
+
+    @Test
+    void usersWithoutAnEmailDoNotCollide() {
+        var first = authService.register(registerRequest("08012346006", "password123", null));
+        var second = authService.register(registerRequest("08012346007", "password123", "   "));
+
+        assertThat(userRepository.findById(first.user().getId()).orElseThrow().getEmail()).isNull();
+        assertThat(userRepository.findById(second.user().getId()).orElseThrow().getEmail()).isNull();
     }
 
     private RegisterRequest registerRequest(String phone, String password, String email) {

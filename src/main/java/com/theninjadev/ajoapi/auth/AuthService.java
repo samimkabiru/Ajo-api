@@ -8,15 +8,17 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
+import java.util.Locale;
 import java.util.UUID;
-import lombok.AllArgsConstructor;
+import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 @Service
-@AllArgsConstructor
 @Transactional
 public class AuthService {
 
@@ -27,31 +29,72 @@ public class AuthService {
     private final JwtService jwtService;
     private final JwtProperties jwtProperties;
     private final Clock clock;
+    private final UserMapper userMapper;
+
+    /**
+     * Hash compared against when the phone is unknown, so a failed login costs one BCrypt
+     * check either way and response time does not reveal which numbers are registered.
+     * Made with the same encoder, so it has the same cost factor as real hashes.
+     */
+    private final String dummyPasswordHash;
+
+    public AuthService(UserRepository userRepository,
+                       RefreshTokenRepository refreshTokenRepository,
+                       PhoneNumberNormalizer phoneNumberNormalizer,
+                       PasswordEncoder passwordEncoder,
+                       JwtService jwtService,
+                       JwtProperties jwtProperties,
+                       Clock clock,
+                       UserMapper userMapper) {
+        this.userRepository = userRepository;
+        this.refreshTokenRepository = refreshTokenRepository;
+        this.phoneNumberNormalizer = phoneNumberNormalizer;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtService = jwtService;
+        this.jwtProperties = jwtProperties;
+        this.clock = clock;
+        this.userMapper = userMapper;
+        this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
+    }
 
     public record AuthTokens(String accessToken, String refreshToken, User user) {
     }
 
     public AuthTokens register(RegisterRequest request) {
         String normalizedPhone = phoneNumberNormalizer.normalize(request.phone());
+        String normalizedEmail = normalizeEmail(request.email());
 
         if (userRepository.findByPhone(normalizedPhone).isPresent())
             throw new DuplicatePhoneException();
 
-        if (StringUtils.hasText(request.email()) && userRepository.findByEmail(request.email()).isPresent())
+        if (normalizedEmail != null && userRepository.findByEmail(normalizedEmail).isPresent())
             throw new DuplicateEmailException();
 
         Instant now = Instant.now(clock);
-        User user = userRepository.save(User.builder()
+        User user = User.builder()
                 .id(UUID.randomUUID())
                 .phone(normalizedPhone)
                 .phoneVerified(false)
-                .email(StringUtils.hasText(request.email()) ? request.email() : null)
+                .email(normalizedEmail)
                 .emailVerified(false)
                 .passwordHash(passwordEncoder.encode(request.password()))
                 .fullName(request.fullName())
                 .createdAt(now)
                 .updatedAt(now)
-                .build());
+                .build();
+
+        // The checks above can race with a concurrent registration; the unique indexes are the
+        // real guard. Flush now so a violation surfaces here, where it can become a 409.
+        try {
+            user = userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            String constraint = constraintName(e);
+            if ("uq_users_phone".equals(constraint))
+                throw new DuplicatePhoneException();
+            if ("uq_users_email_lower".equals(constraint))
+                throw new DuplicateEmailException();
+            throw e;
+        }
 
         return issueTokens(user);
     }
@@ -59,13 +102,26 @@ public class AuthService {
     public AuthTokens login(LoginRequest request) {
         String normalizedPhone = phoneNumberNormalizer.normalize(request.phone());
 
-        User user = userRepository.findByPhone(normalizedPhone)
-                .orElseThrow(InvalidCredentialsException::new);
+        User user = userRepository.findByPhone(normalizedPhone).orElse(null);
+
+        if (user == null) {
+            // Same work as a wrong password, so timing does not reveal whether the phone exists.
+            passwordEncoder.matches(request.password(), dummyPasswordHash);
+            throw new InvalidCredentialsException();
+        }
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash()))
             throw new InvalidCredentialsException();
 
         return issueTokens(user);
+    }
+
+    /** A valid token for a user who no longer exists is treated as an invalid token: 401. */
+    @Transactional(readOnly = true)
+    public UserSummary currentUser(UUID userId) {
+        return userRepository.findById(userId)
+                .map(userMapper::toSummary)
+                .orElseThrow(() -> new InsufficientAuthenticationException("Authenticated user no longer exists"));
     }
 
     public AuthTokens refresh(String presentedRefreshToken) {
@@ -119,6 +175,23 @@ public class AuthService {
                 .build());
 
         return new AuthTokens(accessToken, refreshToken, user);
+    }
+
+    /** Trimmed and lowercased; blank means no email. */
+    static String normalizeEmail(String email) {
+        return StringUtils.hasText(email) ? email.trim().toLowerCase(Locale.ROOT) : null;
+    }
+
+    /** The violated constraint's name, from Hibernate if it knows it, else from the driver's message. */
+    private static String constraintName(DataIntegrityViolationException e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof ConstraintViolationException cve && cve.getConstraintName() != null)
+                return cve.getConstraintName().toLowerCase(Locale.ROOT);
+        }
+        String message = String.valueOf(e.getMostSpecificCause().getMessage());
+        if (message.contains("uq_users_phone")) return "uq_users_phone";
+        if (message.contains("uq_users_email_lower")) return "uq_users_email_lower";
+        return null;
     }
 
     private static String sha256Hex(String value) {

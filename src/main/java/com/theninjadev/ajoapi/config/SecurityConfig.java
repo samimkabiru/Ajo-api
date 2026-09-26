@@ -4,6 +4,7 @@ import com.theninjadev.ajoapi.auth.JwtAuthenticationFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
 import lombok.AllArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -17,6 +18,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.servlet.HandlerExceptionResolver;
 
 @Configuration
 @EnableWebSecurity
@@ -27,7 +29,9 @@ public class SecurityConfig {
     private final CorsProperties corsProperties;
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            @Qualifier("handlerExceptionResolver") HandlerExceptionResolver exceptionResolver) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
                 // Uses the CorsConfigurationSource bean below; runs before authorization so
@@ -42,13 +46,16 @@ public class SecurityConfig {
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                         .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated())
+                // 401 and 403 raised by the filter chain are forwarded to GlobalExceptionHandler, so
+                // they are the same ProblemDetail (same fields, same serialiser) as every other error.
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint((request, response, authException) -> {
-                            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                            response.setContentType("application/problem+json");
-                            response.getWriter().write("""
-                    {"type":"about:blank","title":"Unauthorized","status":401,\
-                    "detail":"Missing or invalid access token"}""");
+                            if (exceptionResolver.resolveException(request, response, null, authException) == null)
+                                response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                        })
+                        .accessDeniedHandler((request, response, accessDeniedException) -> {
+                            if (exceptionResolver.resolveException(request, response, null, accessDeniedException) == null)
+                                response.sendError(HttpServletResponse.SC_FORBIDDEN);
                         }))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 

@@ -4,6 +4,6 @@ import jakarta.validation.constraints.NotBlank;
 
 public record LoginRequest(
         @NotBlank String phone,
-        @NotBlank String password
+        @NotBlank @MaxUtf8Bytes(72) String password
 ) {
 }

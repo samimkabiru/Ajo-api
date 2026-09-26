@@ -21,7 +21,10 @@ class PhoneNumberNormalizerTest {
             "+2348012345678, +2348012345678",
             "'0801 234 5678', +2348012345678",
             "'+234 801 234 5678', +2348012345678",
-            "'234 801 234 5678', +2348012345678"
+            "'234 801 234 5678', +2348012345678",
+            "0803-123-4567, +2348031234567",
+            "'(0803) 123 4567', +2348031234567",
+            "0803.123.4567, +2348031234567"
     })
     void normalizesValidInputsToE164(String input, String expected) {
         assertThat(normalizer.normalize(input)).isEqualTo(expected);

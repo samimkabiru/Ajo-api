@@ -20,14 +20,31 @@ import com.theninjadev.ajoapi.ledger.IdempotencyKeyReusedException;
 import com.theninjadev.ajoapi.payout.*;
 import com.theninjadev.ajoapi.round.*;
 import com.theninjadev.ajoapi.swap.*;
+import java.util.List;
+import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+/**
+ * Every error leaves the API as an RFC 9457 ProblemDetail. Extending
+ * ResponseEntityExceptionHandler covers Spring MVC's own errors (malformed JSON, unknown route,
+ * wrong method or media type); the handlers below cover the domain; the catch-all covers the rest.
+ * The security layer forwards its 401/403 here too (see SecurityConfig), so they match.
+ */
+@Slf4j
 @RestControllerAdvice
-public class GlobalExceptionHandler {
+public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(DuplicatePhoneException.class)
     public ProblemDetail handleDuplicatePhone(DuplicatePhoneException e) {
@@ -367,12 +384,48 @@ public class GlobalExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ProblemDetail handleValidationFailure(MethodArgumentNotValidException e) {
-        String detail = e.getBindingResult().getFieldErrors().stream()
+    // ---- Validation: a readable detail plus one entry per field.
+
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException e,
+                                                                  HttpHeaders headers,
+                                                                  HttpStatusCode status,
+                                                                  WebRequest request) {
+        var fieldErrors = e.getBindingResult().getFieldErrors();
+        String detail = fieldErrors.stream()
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .reduce((a, b) -> a + "; " + b)
                 .orElse("Validation failed");
-        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
+        List<Map<String, String>> errors = fieldErrors.stream()
+                .map(error -> Map.of(
+                        "field", error.getField(),
+                        "message", String.valueOf(error.getDefaultMessage())))
+                .toList();
+        problem.setProperty("errors", errors);
+
+        return handleExceptionInternal(e, problem, headers, HttpStatus.BAD_REQUEST, request);
+    }
+
+    // ---- Spring Security. Explicit, so the catch-all below can never turn them into 500s.
+    // The messages are fixed on purpose: the exceptions' own text is not for clients.
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ProblemDetail handleAuthentication(AuthenticationException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, "Missing or invalid access token");
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ProblemDetail handleAccessDenied(AccessDeniedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, "Access denied");
+    }
+
+    // ---- Anything else is a bug: log it in full, tell the client nothing about internals.
+
+    @ExceptionHandler(Exception.class)
+    public ProblemDetail handleUnexpected(Exception e) {
+        log.error("Unhandled exception", e);
+        return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred");
     }
 }

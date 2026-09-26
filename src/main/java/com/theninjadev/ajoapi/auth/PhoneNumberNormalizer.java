@@ -14,7 +14,8 @@ public class PhoneNumberNormalizer {
         if (rawInput == null)
             throw new InvalidPhoneNumberException();
 
-        String cleaned = rawInput.replaceAll("\\s+", "");
+        // Separators people type: spaces, dashes, dots, parentheses — 0803-123-4567, (0803) 123 4567.
+        String cleaned = rawInput.replaceAll("[\\s\\-.()]+", "");
 
         if (E164.matcher(cleaned).matches())
             return cleaned;
