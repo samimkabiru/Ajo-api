@@ -629,6 +629,13 @@ Honest edges, worth being able to state:
   with a fixed clock.
 - **Single currency.** The `currency` column exists; nothing uses it.
 - **No bidding for early positions**, which exists in some real Ajo variants.
+- **`login_attempt_counters` only grows under attack.** A row goes away on a
+  successful login or password reset, so for legitimate use the table stays
+  small. A number that only ever fails keeps its row for good, so an attacker
+  spraying a million numbers leaves a million rows. If that ever matters, the
+  fix is a periodic delete of rows whose window and block have both expired.
+  None is built: it would be the codebase's first scheduled job, and it would
+  not run reliably on a host that spins down.
 
 ---
 

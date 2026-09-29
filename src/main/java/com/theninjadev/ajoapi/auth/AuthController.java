@@ -52,7 +52,9 @@ public class AuthController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Logged in."),
             @ApiResponse(responseCode = "400", description = "Validation failed, or the phone number is not a valid Nigerian number."),
-            @ApiResponse(responseCode = "401", description = "Wrong phone number or password.")
+            @ApiResponse(responseCode = "401", description = "Wrong phone number or password."),
+            @ApiResponse(responseCode = "429", description = "Too many failed attempts for this phone number. "
+                    + "Retry after the number of seconds in the Retry-After header and the retryAfterSeconds field.")
     })
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {

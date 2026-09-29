@@ -1,5 +1,6 @@
 package com.theninjadev.ajoapi.verification;
 
+import com.theninjadev.ajoapi.auth.LoginAttemptLimiter;
 import com.theninjadev.ajoapi.auth.PhoneNumberNormalizer;
 import com.theninjadev.ajoapi.auth.RefreshTokenRepository;
 import com.theninjadev.ajoapi.auth.User;
@@ -31,6 +32,7 @@ public class PasswordResetService {
     private final PhoneNumberNormalizer phoneNumberNormalizer;
     private final PasswordEncoder passwordEncoder;
     private final OtpProperties otpProperties;
+    private final LoginAttemptLimiter loginAttemptLimiter;
     private final Clock clock;
 
     /** Compared against on paths that would otherwise skip BCrypt. Same encoder, so same cost. */
@@ -42,6 +44,7 @@ public class PasswordResetService {
                                 PhoneNumberNormalizer phoneNumberNormalizer,
                                 PasswordEncoder passwordEncoder,
                                 OtpProperties otpProperties,
+                                LoginAttemptLimiter loginAttemptLimiter,
                                 Clock clock) {
         this.verificationCodes = verificationCodes;
         this.userRepository = userRepository;
@@ -49,6 +52,7 @@ public class PasswordResetService {
         this.phoneNumberNormalizer = phoneNumberNormalizer;
         this.passwordEncoder = passwordEncoder;
         this.otpProperties = otpProperties;
+        this.loginAttemptLimiter = loginAttemptLimiter;
         this.clock = clock;
         this.dummyHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
@@ -109,6 +113,10 @@ public class PasswordResetService {
         var sessions = refreshTokenRepository.findByUserIdAndRevokedAtIsNull(user.getId());
         sessions.forEach(token -> token.revoke(now));
         refreshTokenRepository.saveAll(sessions);
+
+        // The SMS code proved control of the phone — stronger evidence than a password — so a
+        // login block for this number has served its purpose. Success path only.
+        loginAttemptLimiter.clear(phone);
     }
 
     private void burnOneBcrypt() {

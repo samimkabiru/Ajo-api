@@ -68,6 +68,7 @@ public class SecurityConfig {
         config.setAllowedOrigins(corsProperties.allowedOrigins());
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key"));
+        config.setExposedHeaders(List.of("Retry-After"));   // not CORS-safelisted; sent with login 429s
         config.setAllowCredentials(true);   // the refresh token travels as a cookie
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

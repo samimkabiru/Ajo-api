@@ -5,6 +5,7 @@ import com.theninjadev.ajoapi.auth.DuplicatePhoneException;
 import com.theninjadev.ajoapi.auth.InvalidCredentialsException;
 import com.theninjadev.ajoapi.auth.InvalidPhoneNumberException;
 import com.theninjadev.ajoapi.auth.InvalidRefreshTokenException;
+import com.theninjadev.ajoapi.auth.LoginRateLimitedException;
 import com.theninjadev.ajoapi.contribution.*;
 import com.theninjadev.ajoapi.exit.*;
 import com.theninjadev.ajoapi.group.AlreadyGroupMemberException;
@@ -72,6 +73,18 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(InvalidCredentialsException.class)
     public ProblemDetail handleInvalidCredentials(InvalidCredentialsException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, e.getMessage());
+    }
+
+    // Retry-After for HTTP clients; the same seconds in the body because a browser calling
+    // cross-origin can read a non-safelisted header only if CORS exposes it. Always the
+    // configured block duration, never the time remaining.
+    @ExceptionHandler(LoginRateLimitedException.class)
+    public ResponseEntity<ProblemDetail> handleLoginRateLimited(LoginRateLimitedException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+        problem.setProperty("retryAfterSeconds", e.getRetryAfterSeconds());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(e.getRetryAfterSeconds()))
+                .body(problem);
     }
 
     @ExceptionHandler(InvalidRefreshTokenException.class)

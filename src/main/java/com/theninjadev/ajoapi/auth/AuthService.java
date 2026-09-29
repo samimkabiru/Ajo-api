@@ -30,6 +30,8 @@ public class AuthService {
     private final JwtProperties jwtProperties;
     private final Clock clock;
     private final UserMapper userMapper;
+    private final LoginAttemptLimiter loginAttemptLimiter;
+    private final LoginRateLimitProperties loginRateLimitProperties;
 
     /**
      * Hash compared against when the phone is unknown, so a failed login costs one BCrypt
@@ -45,7 +47,9 @@ public class AuthService {
                        JwtService jwtService,
                        JwtProperties jwtProperties,
                        Clock clock,
-                       UserMapper userMapper) {
+                       UserMapper userMapper,
+                       LoginAttemptLimiter loginAttemptLimiter,
+                       LoginRateLimitProperties loginRateLimitProperties) {
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.phoneNumberNormalizer = phoneNumberNormalizer;
@@ -54,6 +58,8 @@ public class AuthService {
         this.jwtProperties = jwtProperties;
         this.clock = clock;
         this.userMapper = userMapper;
+        this.loginAttemptLimiter = loginAttemptLimiter;
+        this.loginRateLimitProperties = loginRateLimitProperties;
         this.dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
     }
 
@@ -99,21 +105,45 @@ public class AuthService {
         return issueTokens(user);
     }
 
+    // A @Transactional method that throws rolls back — so written naively, the failed-attempt
+    // increment is undone by the 401 that reports it and the limit never engages (the same trap
+    // as OtpService.verifyCode). InvalidCredentials is thrown only after the increment, so it
+    // commits. LoginRateLimited is listed for the next reader's sake: every path that throws it
+    // has written nothing, so committing or rolling back is the same.
+    @Transactional(noRollbackFor = { InvalidCredentialsException.class, LoginRateLimitedException.class })
     public AuthTokens login(LoginRequest request) {
         String normalizedPhone = phoneNumberNormalizer.normalize(request.phone());
+
+        // Before any lookup or BCrypt. Faster than a real attempt, which is fine: the 429 already
+        // announces the state, so the timing adds nothing. Writes nothing, so it never extends a block.
+        if (loginAttemptLimiter.isBlocked(normalizedPhone))
+            throw rateLimited();
 
         User user = userRepository.findByPhone(normalizedPhone).orElse(null);
 
         if (user == null) {
             // Same work as a wrong password, so timing does not reveal whether the phone exists.
             passwordEncoder.matches(request.password(), dummyPasswordHash);
-            throw new InvalidCredentialsException();
+            throw failedLogin(normalizedPhone);
         }
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash()))
-            throw new InvalidCredentialsException();
+            throw failedLogin(normalizedPhone);
 
+        loginAttemptLimiter.clear(normalizedPhone);
         return issueTokens(user);
+    }
+
+    /** Counted identically whether or not the phone has an account, so a 429 reveals nothing. */
+    private RuntimeException failedLogin(String normalizedPhone) {
+        return switch (loginAttemptLimiter.recordFailure(normalizedPhone)) {
+            case RECORDED -> new InvalidCredentialsException();
+            case ALREADY_BLOCKED -> rateLimited();
+        };
+    }
+
+    private LoginRateLimitedException rateLimited() {
+        return new LoginRateLimitedException(loginRateLimitProperties.blockDuration().toSeconds());
     }
 
     /** A valid token for a user who no longer exists is treated as an invalid token: 401. */

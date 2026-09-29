@@ -51,3 +51,9 @@ app:
     max-requests-per-window: 3
     request-window: 1h
     resend-cooldown: 60s
+  # Failed logins per phone number. Not secrets; defaults also live in LoginRateLimitProperties.
+  security:
+    login-rate-limit:
+      max-attempts: 5
+      window: 15m
+      block-duration: 15m
