@@ -629,6 +629,13 @@ Honest edges, worth being able to state:
   with a fixed clock.
 - **Single currency.** The `currency` column exists; nothing uses it.
 - **No bidding for early positions**, which exists in some real Ajo variants.
+- **Email is collected but unused.** Registration accepts an optional email,
+  normalises it and enforces uniqueness, and `UserSummary` returns it. Nothing
+  reads it: login and password reset are phone-only, nothing is ever emailed,
+  and `emailVerified` is always `false`, because no flow sets it. The duplicate
+  check's 409 also lets anyone test whether an email is registered. Either give
+  email a job (with its own verification and non-disclosure), or drop the
+  columns and the field.
 - **`login_attempt_counters` only grows under attack.** A row goes away on a
   successful login or password reset, so for legitimate use the table stays
   small. A number that only ever fails keeps its row for good, so an attacker
