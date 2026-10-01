@@ -11,7 +11,6 @@ import com.theninjadev.ajoapi.verification.PhoneNotVerifiedException;
 import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -256,8 +255,7 @@ public class GroupService {
             if (roundRepository.existsByGroupIdAndStatusIn(groupId, List.of(RoundStatus.FORMING)))
                 throw new GroupHasFormingRoundException();
 
-            // Truncated to what TIMESTAMPTZ stores, so this response and every later read agree.
-            group.archive(Instant.now(clock).truncatedTo(ChronoUnit.MICROS));
+            group.archive(Instant.now(clock));
             groupRepository.save(group);
             return Optional.of(groupMapper.toSummary(group));
         }

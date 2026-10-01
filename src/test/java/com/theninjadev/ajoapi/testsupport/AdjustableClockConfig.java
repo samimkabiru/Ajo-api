@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Primary;
 @TestConfiguration
 public class AdjustableClockConfig {
 
+    /** Microsecond precision, mirroring the production clock's tick — see AdjustableClock.instant(). */
     @Bean
     @Primary
     public Clock testClock() {
