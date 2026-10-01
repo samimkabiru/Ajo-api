@@ -438,13 +438,18 @@ public class ExitService {
         if (LocalDate.now(clock).isBefore(cycle.getPayoutOn()))
             throw new SettlementNotYetDueException();
 
-        long remaining = availableInPot(cycle);
-        if (remaining <= 0)
+        long inPot = availableInPot(cycle);
+        if (inPot <= 0)
             throw new NothingToSettleException();
 
         LedgerAccount pool = ledgerAccountRepository
                 .findByAccountTypeAndOwnerId(AccountType.ROUND_POOL, roundId)
                 .orElseThrow(() -> new IllegalStateException("Round has no pool account"));
+
+        // The cycle's records say what was paid into it, but payouts cap at the whole pool, so a
+        // short cycle may already have spent that money. Spend no more than the pool holds — read
+        // under the group lock — or settling after such a payout overdraws it.
+        long remaining = Math.min(inPot, Math.max(0, -ledgerService.balanceOf(pool.getId())));
 
         Instant now = Instant.now(clock);
         long potGross = potOf(cycle);
@@ -461,40 +466,53 @@ public class ExitService {
             RoundParticipant leaverSlot = roundParticipantRepository.findById(exit.getParticipantId())
                     .orElseThrow(() -> new IllegalStateException("Exiting participant not found"));
 
-            UUID refundId = UUID.randomUUID();
-            UUID refundTransactionId = ledgerService.post(
-                    EntryType.REFUND,
-                    refundId,
-                    List.of(
-                            new PostingLine(LedgerAccounts.PLATFORM_CASH_ID, -refundAmount),
-                            new PostingLine(pool.getId(), refundAmount)));
+            // LedgerService rejects zero-amount lines: with nothing in the pool, there is no refund to post.
+            if (refundAmount > 0) {
+                UUID refundId = UUID.randomUUID();
+                UUID refundTransactionId = ledgerService.post(
+                        EntryType.REFUND,
+                        refundId,
+                        List.of(
+                                new PostingLine(LedgerAccounts.PLATFORM_CASH_ID, -refundAmount),
+                                new PostingLine(pool.getId(), refundAmount)));
 
-            Refund refund = refundRepository.save(Refund.builder()
-                    .id(refundId)
-                    .cycleId(cycleId)
-                    .exitRequestId(exit.getId())
-                    .participantId(exit.getParticipantId())
-                    .userId(leaverSlot.getUserId())          // snapshot: the slot may move on later
-                    .expectedAmountKobo(refundOwed)
-                    .actualAmountKobo(refundAmount)
-                    .ledgerTransactionId(refundTransactionId)
-                    .createdAt(now)
-                    .build());
+                Refund refund = refundRepository.save(Refund.builder()
+                        .id(refundId)
+                        .cycleId(cycleId)
+                        .exitRequestId(exit.getId())
+                        .participantId(exit.getParticipantId())
+                        .userId(leaverSlot.getUserId())          // snapshot: the slot may move on later
+                        .expectedAmountKobo(refundOwed)
+                        .actualAmountKobo(refundAmount)
+                        .ledgerTransactionId(refundTransactionId)
+                        .createdAt(now)
+                        .build());
 
-            remaining -= refundAmount;
+                remaining -= refundAmount;
 
-            // Fully refunded means they are finally out. The cycle is already vacant,
-            // so completeExit is not the right path here.
-            if (refundAmount == refundOwed) {
-                exit.complete(now);
-                exitRequestRepository.save(exit);
-                leaverSlot.markExited();
-                roundParticipantRepository.save(leaverSlot);
+                User recipient = userRepository.findById(leaverSlot.getUserId())
+                        .orElseThrow(() -> new IllegalStateException("User not found"));
+                refundSummary = exitMapper.toRefundSummary(refund, userMapper.toSummary(recipient));
             }
 
-            User recipient = userRepository.findById(leaverSlot.getUserId())
-                    .orElseThrow(() -> new IllegalStateException("User not found"));
-            refundSummary = exitMapper.toRefundSummary(refund, userMapper.toSummary(recipient));
+            // What the pool could not cover, the group owes them — the same shortfall claim a
+            // beneficiary gets when their pot comes up short. It is settled as money arrives.
+            if (refundAmount < refundOwed) {
+                shortfallClaimRepository.save(ShortfallClaim.builder()
+                        .id(UUID.randomUUID())
+                        .cycleId(cycleId)
+                        .participantId(exit.getParticipantId())
+                        .amountKobo(refundOwed - refundAmount)
+                        .createdAt(now)
+                        .build());
+            }
+
+            // Either refunded in full or owed the rest by claim: they are out of the rotation.
+            // The cycle is already vacant, so completeExit is not the right path here.
+            exit.complete(now);
+            exitRequestRepository.save(exit);
+            leaverSlot.markExited();
+            roundParticipantRepository.save(leaverSlot);
         }
 
         // ---- Then the shortfall claims, oldest first.
@@ -727,6 +745,10 @@ public class ExitService {
         if (cycle.getVacatedByExitId() == null)
             return 0;
         if (refundRepository.existsByExitRequestId(cycle.getVacatedByExitId()))
+            return 0;
+        // A vacant cycle never pays out, so a claim on it can only be the leaver's: whatever the
+        // pool could not refund is already owed by that claim.
+        if (shortfallClaimRepository.findByCycleId(cycle.getId()).isPresent())
             return 0;
 
         ExitRequest exit = exitRequestRepository.findById(cycle.getVacatedByExitId())

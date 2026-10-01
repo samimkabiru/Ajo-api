@@ -277,15 +277,37 @@ Written down because it only works if every path follows it:
    so `group` and `round` depend on each other. That cycle is deliberate: the
    operation spans both, and a coordinator just to hide it would cost more.)
 5. **The group row also guards the round pool, and is locked before cycles.**
-   `payout` and `settleVacantCycle` both size an outflow from the pool's
-   balance. Their cycle locks don't serialise them: two payouts on different
-   cycles lock different rows, read the same balance, and both pay it out.
-   With two cycles overdue and one pot in the pool, that paid out twice what
-   came in. So both take the group lock first, then the cycle, and read the
-   balance only once both are held. One group has at most one active round,
-   so this is effectively a per-round lock at no extra contention. Order is
-   always group → cycles → swap requests; nothing that holds a cycle lock may
-   then ask for the group.
+   The rule: *a path that sizes an amount from the pool's balance and then
+   spends against it takes the group lock before reading that balance.*
+   `payout` is that path: it pays `min(expected, pool balance)`. Its cycle
+   lock alone doesn't serialise it — two payouts on different cycles lock
+   different rows, read the same balance, and both pay it out. With two
+   cycles overdue and one pot in the pool, that paid out twice what came in
+   (`PayoutPoolConcurrencyTest`). One group has at most one active round, so
+   the group lock is effectively a per-round lock at no extra contention.
+
+   `settleVacantCycle` is the other. It starts from the vacant cycle's own
+   records (`availableInPot` — what was paid into that cycle, less what was
+   already paid out of it), but those records can't know that `payout`,
+   capping at the whole pool, may already have spent that money on a short
+   cycle. Settling after such a payout once refunded money that was gone and
+   overdrew the pool, with no race involved (`PayoutThenSettlePoolTest`). So
+   settle now spends `min(availableInPot, pool balance)`, read under the group
+   lock, and whatever it can't refund becomes a shortfall claim for the leaver
+   — the same way a short pot is handled at payout. The leaver is out of the
+   rotation either way; the group owes them the rest, settled as money arrives.
+
+   Paths that **don't** need the lock, because they don't size from the
+   balance:
+   - `contribute` and `repay` only add to the pool, sized by the request. More
+     money arriving can't overdraw anything.
+   - `buyIn` posts the buy-in and the leaver's refund in one transaction, both
+     sized from the leaver's exposure, so the pool's net change is zero.
+   - Arrears distributed inside `payout` are part of that payout's own amount,
+     already sized under its lock.
+
+   Order is always group → cycles → swap requests; nothing that holds a cycle
+   lock may then ask for the group.
 
 `SELECT ... FOR UPDATE` — a pessimistic write lock — makes the second
 transaction *wait* rather than proceed on stale data.
@@ -641,8 +663,10 @@ Honest edges, worth being able to state:
 
 - **Payouts draw on the whole round pool, not a per-cycle pot.** Leftover
   withheld money or a vacant pot can top up a later beneficiary's short pot —
-  occasionally one who skipped their own cycle. Changing this means keeping
-  each cycle's money separate.
+  occasionally one who skipped their own cycle. When that money was a vacant
+  pot, the leaver it was owed to is then refunded only what the pool still
+  holds, and owed the rest by shortfall claim (§7, item 5). Changing this
+  means keeping each cycle's money separate.
 - **No automatic recovery from a post-collection default** beyond blocking
   their exit and recording the debt. Guarantors are the obvious next step and
   are not built.

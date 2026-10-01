@@ -20,6 +20,11 @@ public class AdjustableClock extends Clock {
         this.zone = zone;
     }
 
+    /** Back to the real present. Called before every integration test by ResetAdjustableClockExtension. */
+    public void reset() {
+        instant = Instant.now();
+    }
+
     public void advanceBy(Duration duration) {
         instant = instant.plus(duration);
     }
