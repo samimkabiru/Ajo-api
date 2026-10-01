@@ -34,7 +34,7 @@ public class RoundController {
             @ApiResponse(responseCode = "400", description = "Validation failed."),
             @ApiResponse(responseCode = "403", description = "You are not an admin of this group."),
             @ApiResponse(responseCode = "404", description = "You are not a member of this group."),
-            @ApiResponse(responseCode = "409", description = "The group already has a FORMING or ACTIVE round.")
+            @ApiResponse(responseCode = "409", description = "The group already has a FORMING or ACTIVE round, or is archived.")
     })
     @PostMapping("/groups/{groupId}/rounds")
     public ResponseEntity<RoundSummary> createRound(@PathVariable UUID groupId, @Valid @RequestBody CreateRoundRequest request) {

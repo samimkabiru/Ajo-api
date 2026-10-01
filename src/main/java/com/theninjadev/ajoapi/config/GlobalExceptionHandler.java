@@ -12,6 +12,9 @@ import com.theninjadev.ajoapi.group.AlreadyGroupMemberException;
 import com.theninjadev.ajoapi.group.CannotRemoveLastAdminException;
 import com.theninjadev.ajoapi.group.CannotRemoveSelfException;
 import com.theninjadev.ajoapi.group.DuplicatePendingInviteException;
+import com.theninjadev.ajoapi.group.GroupArchivedException;
+import com.theninjadev.ajoapi.group.GroupHasFormingRoundException;
+import com.theninjadev.ajoapi.group.GroupHasRoundInProgressException;
 import com.theninjadev.ajoapi.group.GroupNotFoundException;
 import com.theninjadev.ajoapi.group.InsufficientRoleException;
 import com.theninjadev.ajoapi.group.InviteNotFoundException;
@@ -105,6 +108,21 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(InsufficientRoleException.class)
     public ProblemDetail handleInsufficientRole(InsufficientRoleException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, e.getMessage());
+    }
+
+    @ExceptionHandler(GroupArchivedException.class)
+    public ProblemDetail handleGroupArchived(GroupArchivedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(GroupHasRoundInProgressException.class)
+    public ProblemDetail handleGroupHasRoundInProgress(GroupHasRoundInProgressException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(GroupHasFormingRoundException.class)
+    public ProblemDetail handleGroupHasFormingRound(GroupHasFormingRoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 
     @ExceptionHandler(InviteNotFoundException.class)

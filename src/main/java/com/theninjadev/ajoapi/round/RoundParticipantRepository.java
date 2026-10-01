@@ -3,6 +3,7 @@ package com.theninjadev.ajoapi.round;
 import java.util.*;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -25,4 +26,8 @@ public interface RoundParticipantRepository extends JpaRepository<RoundParticipa
         """)
     Set<UUID> findUserIdsWithCompletedRoundsInGroup(@Param("groupId") UUID groupId,
                                                     @Param("userIds") Collection<UUID> userIds);
+
+    @Modifying
+    @Query("delete from RoundParticipant rp where rp.roundId in (select r.id from Round r where r.groupId = :groupId)")
+    void deleteAllByGroupId(@Param("groupId") UUID groupId);
 }

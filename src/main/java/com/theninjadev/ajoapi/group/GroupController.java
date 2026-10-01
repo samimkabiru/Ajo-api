@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -39,13 +40,14 @@ public class GroupController {
         return ResponseEntity.status(HttpStatus.CREATED).body(groupService.createGroup(currentUserId(), request));
     }
 
-    @Operation(summary = "List my groups")
+    @Operation(summary = "List my groups",
+            description = "Active groups by default. Pass archived=true for archived ones instead.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Groups you belong to.")
     })
     @GetMapping
-    public ResponseEntity<List<GroupSummary>> listMyGroups() {
-        return ResponseEntity.ok(groupService.listMyGroups(currentUserId()));
+    public ResponseEntity<List<GroupSummary>> listMyGroups(@RequestParam(defaultValue = "false") boolean archived) {
+        return ResponseEntity.ok(groupService.listMyGroups(currentUserId(), archived));
     }
 
     @Operation(summary = "List invites sent to me")
@@ -72,11 +74,30 @@ public class GroupController {
             @ApiResponse(responseCode = "200", description = "Group updated."),
             @ApiResponse(responseCode = "400", description = "Validation failed."),
             @ApiResponse(responseCode = "403", description = "You are not an admin of this group."),
-            @ApiResponse(responseCode = "404", description = "The group does not exist, or you are not a member of it.")
+            @ApiResponse(responseCode = "404", description = "The group does not exist, or you are not a member of it."),
+            @ApiResponse(responseCode = "409", description = "The group is archived and can no longer be changed.")
     })
     @PatchMapping("/{groupId}")
     public ResponseEntity<GroupSummary> updateGroup(@PathVariable UUID groupId, @Valid @RequestBody UpdateGroupRequest request) {
         return ResponseEntity.ok(groupService.updateGroup(currentUserId(), groupId, request));
+    }
+
+    @Operation(summary = "Delete or archive a group",
+            description = "The group's state decides, not the caller. A group that never moved money is deleted "
+                    + "outright. One with financial history is archived: read-only, hidden from the default list, "
+                    + "nothing removed. A group with a round in progress is refused.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Archived. The body is the group with archivedAt set."),
+            @ApiResponse(responseCode = "204", description = "Deleted."),
+            @ApiResponse(responseCode = "403", description = "You are not an admin of this group."),
+            @ApiResponse(responseCode = "404", description = "The group does not exist, or you are not a member of it."),
+            @ApiResponse(responseCode = "409", description = "A round is in progress, or a FORMING round must be cancelled before archiving.")
+    })
+    @DeleteMapping("/{groupId}")
+    public ResponseEntity<GroupSummary> deleteGroup(@PathVariable UUID groupId) {
+        return groupService.deleteGroup(currentUserId(), groupId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     @Operation(summary = "Invite someone by phone number",
@@ -86,7 +107,7 @@ public class GroupController {
             @ApiResponse(responseCode = "400", description = "Validation failed, or the phone number is not a valid Nigerian number."),
             @ApiResponse(responseCode = "403", description = "You are not an admin of this group."),
             @ApiResponse(responseCode = "404", description = "The group does not exist, or you are not a member of it."),
-            @ApiResponse(responseCode = "409", description = "That phone number already belongs to a member, or already has a pending invite.")
+            @ApiResponse(responseCode = "409", description = "That phone number already belongs to a member or already has a pending invite, or the group is archived.")
     })
     @PostMapping("/{groupId}/invites")
     public ResponseEntity<GroupInviteSummary> inviteMember(@PathVariable UUID groupId, @Valid @RequestBody InviteMemberRequest request) {
@@ -97,7 +118,7 @@ public class GroupController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "You are now a member of the group."),
             @ApiResponse(responseCode = "404", description = "The invite does not exist or was not sent to you."),
-            @ApiResponse(responseCode = "409", description = "The invite has already been accepted, declined or revoked.")
+            @ApiResponse(responseCode = "409", description = "The invite has already been accepted, declined or revoked, or the group is archived.")
     })
     @PostMapping("/invites/{inviteId}/accept")
     public ResponseEntity<GroupMemberSummary> acceptInvite(@PathVariable UUID inviteId) {
@@ -108,7 +129,7 @@ public class GroupController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Invite declined."),
             @ApiResponse(responseCode = "404", description = "The invite does not exist or was not sent to you."),
-            @ApiResponse(responseCode = "409", description = "The invite has already been accepted, declined or revoked.")
+            @ApiResponse(responseCode = "409", description = "The invite has already been accepted, declined or revoked, or the group is archived.")
     })
     @PostMapping("/invites/{inviteId}/decline")
     public ResponseEntity<GroupInviteSummary> declineInvite(@PathVariable UUID inviteId) {
@@ -120,7 +141,7 @@ public class GroupController {
             @ApiResponse(responseCode = "200", description = "Invite revoked."),
             @ApiResponse(responseCode = "403", description = "You are not an admin of the inviting group."),
             @ApiResponse(responseCode = "404", description = "The invite or its group does not exist, or you are not a member of the group."),
-            @ApiResponse(responseCode = "409", description = "The invite has already been accepted, declined or revoked.")
+            @ApiResponse(responseCode = "409", description = "The invite has already been accepted, declined or revoked, or the group is archived.")
     })
     @PostMapping("/invites/{inviteId}/revoke")
     public ResponseEntity<GroupInviteSummary> revokeInvite(@PathVariable UUID inviteId) {
@@ -144,7 +165,7 @@ public class GroupController {
             @ApiResponse(responseCode = "400", description = "Admins cannot remove themselves; use leave instead."),
             @ApiResponse(responseCode = "403", description = "You are not an admin of this group."),
             @ApiResponse(responseCode = "404", description = "The group does not exist, or you or the target are not members of it."),
-            @ApiResponse(responseCode = "409", description = "The last remaining admin cannot be removed.")
+            @ApiResponse(responseCode = "409", description = "The last remaining admin cannot be removed, or the group is archived.")
     })
     @DeleteMapping("/{groupId}/members/{userId}")
     public ResponseEntity<Void> removeMember(@PathVariable UUID groupId, @PathVariable UUID userId) {
@@ -156,7 +177,7 @@ public class GroupController {
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "You have left the group."),
             @ApiResponse(responseCode = "404", description = "The group does not exist, or you are not a member of it."),
-            @ApiResponse(responseCode = "409", description = "You are the last remaining admin and cannot leave.")
+            @ApiResponse(responseCode = "409", description = "You are the last remaining admin and cannot leave, or the group is archived.")
     })
     @PostMapping("/{groupId}/leave")
     public ResponseEntity<Void> leaveGroup(@PathVariable UUID groupId) {

@@ -4,6 +4,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface GroupMemberRepository extends JpaRepository<GroupMember, UUID> {
 
@@ -18,4 +21,8 @@ public interface GroupMemberRepository extends JpaRepository<GroupMember, UUID> 
     long countByGroupIdAndRole(UUID groupId, GroupRole role);
 
     boolean existsByGroupIdAndUserId(UUID groupId, UUID userId);
+
+    @Modifying
+    @Query("delete from GroupMember m where m.groupId = :groupId")
+    void deleteAllByGroupId(@Param("groupId") UUID groupId);
 }

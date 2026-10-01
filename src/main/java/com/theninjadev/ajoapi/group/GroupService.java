@@ -4,11 +4,17 @@ import com.theninjadev.ajoapi.auth.PhoneNumberNormalizer;
 import com.theninjadev.ajoapi.auth.User;
 import com.theninjadev.ajoapi.auth.UserMapper;
 import com.theninjadev.ajoapi.auth.UserRepository;
+import com.theninjadev.ajoapi.round.RoundParticipantRepository;
+import com.theninjadev.ajoapi.round.RoundRepository;
+import com.theninjadev.ajoapi.round.RoundStatus;
 import com.theninjadev.ajoapi.verification.PhoneNotVerifiedException;
+import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import lombok.AllArgsConstructor;
@@ -23,11 +29,16 @@ public class GroupService {
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final GroupInviteRepository groupInviteRepository;
+    // Deliberate group <-> round package cycle: removing a group inherently spans both, and a
+    // coordinating component just to avoid the cycle would cost more than the cycle does.
+    private final RoundRepository roundRepository;
+    private final RoundParticipantRepository roundParticipantRepository;
     private final UserRepository userRepository;
     private final PhoneNumberNormalizer phoneNumberNormalizer;
     private final GroupMapper groupMapper;
     private final UserMapper userMapper;
     private final Clock clock;
+    private final EntityManager entityManager;
 
     @Transactional
     public GroupSummary createGroup(UUID callerId, CreateGroupRequest request) {
@@ -54,11 +65,14 @@ public class GroupService {
         return groupMapper.toSummary(group);
     }
 
-    public List<GroupSummary> listMyGroups(UUID callerId) {
+    public List<GroupSummary> listMyGroups(UUID callerId, boolean archived) {
         List<UUID> groupIds = groupMemberRepository.findByUserId(callerId).stream()
                 .map(GroupMember::getGroupId)
                 .toList();
-        return groupRepository.findAllById(groupIds).stream()
+        List<Group> groups = archived
+                ? groupRepository.findAllByIdInAndArchivedAtIsNotNull(groupIds)
+                : groupRepository.findAllByIdInAndArchivedAtIsNull(groupIds);
+        return groups.stream()
                 .map(groupMapper::toSummary)
                 .toList();
     }
@@ -70,13 +84,14 @@ public class GroupService {
         List<GroupMemberSummary> members = memberSummaries(groupId);
 
         return new GroupDetail(group.getId(), group.getName(), group.getDescription(),
-                group.getCreatedBy(), group.getCreatedAt(), group.getUpdatedAt(), members);
+                group.getCreatedBy(), group.getCreatedAt(), group.getUpdatedAt(), group.getArchivedAt(), members);
     }
 
     @Transactional
     public GroupSummary updateGroup(UUID callerId, UUID groupId, UpdateGroupRequest request) {
-        Group group = getGroupOrThrow(groupId);
+        Group group = lockGroupOrThrow(groupId);
         requireAdmin(groupId, callerId);
+        requireNotArchived(group);
 
         group.update(request.name(), request.description(), Instant.now(clock));
         groupRepository.save(group);
@@ -86,8 +101,9 @@ public class GroupService {
 
     @Transactional
     public GroupInviteSummary inviteMember(UUID callerId, UUID groupId, InviteMemberRequest request) {
-        getGroupOrThrow(groupId);
+        Group group = lockGroupOrThrow(groupId);
         requireAdmin(groupId, callerId);
+        requireNotArchived(group);
 
         String normalizedPhone = phoneNumberNormalizer.normalize(request.phone());
 
@@ -114,7 +130,7 @@ public class GroupService {
 
     public List<GroupInviteSummary> listMyInvites(UUID callerId) {
         User caller = getCallerOrThrow(callerId);
-        return groupInviteRepository.findByPhoneAndStatus(caller.getPhone(), InviteStatus.PENDING).stream()
+        return groupInviteRepository.findPendingToJoinableGroups(caller.getPhone()).stream()
                 .map(groupMapper::toInviteSummary)
                 .toList();
     }
@@ -122,10 +138,11 @@ public class GroupService {
     @Transactional
     public GroupMemberSummary acceptInvite(UUID callerId, UUID inviteId) {
         requireVerifiedPhone(callerId);
-        GroupInvite invite = groupInviteRepository.findById(inviteId).orElseThrow(InviteNotFoundException::new);
+        GroupInvite invite = lockInviteGroup(inviteId);
         User caller = getCallerOrThrow(callerId);
         requireInvitee(invite, caller);
         requirePending(invite);
+        requireNotArchived(getGroupOrThrow(invite.getGroupId()));
 
         Instant now = Instant.now(clock);
         invite.accept(now);
@@ -144,10 +161,11 @@ public class GroupService {
 
     @Transactional
     public GroupInviteSummary declineInvite(UUID callerId, UUID inviteId) {
-        GroupInvite invite = groupInviteRepository.findById(inviteId).orElseThrow(InviteNotFoundException::new);
+        GroupInvite invite = lockInviteGroup(inviteId);
         User caller = getCallerOrThrow(callerId);
         requireInvitee(invite, caller);
         requirePending(invite);
+        requireNotArchived(getGroupOrThrow(invite.getGroupId()));
 
         invite.decline(Instant.now(clock));
         groupInviteRepository.save(invite);
@@ -158,9 +176,11 @@ public class GroupService {
     @Transactional
     public GroupInviteSummary revokeInvite(UUID callerId, UUID inviteId) {
         GroupInvite invite = groupInviteRepository.findById(inviteId).orElseThrow(InviteNotFoundException::new);
-        getGroupOrThrow(invite.getGroupId());
+        Group group = lockGroupOrThrow(invite.getGroupId());
+        entityManager.refresh(invite);
         requireAdmin(invite.getGroupId(), callerId);
         requirePending(invite);
+        requireNotArchived(group);
 
         invite.revoke(Instant.now(clock));
         groupInviteRepository.save(invite);
@@ -176,8 +196,9 @@ public class GroupService {
 
     @Transactional
     public void removeMember(UUID callerId, UUID groupId, UUID targetUserId) {
-        getGroupOrThrow(groupId);
+        Group group = lockGroupOrThrow(groupId);
         requireAdmin(groupId, callerId);
+        requireNotArchived(group);
 
         if (callerId.equals(targetUserId))
             throw new CannotRemoveSelfException();
@@ -198,8 +219,9 @@ public class GroupService {
 
     @Transactional
     public void leaveGroup(UUID callerId, UUID groupId) {
-        getGroupOrThrow(groupId);
+        Group group = lockGroupOrThrow(groupId);
         GroupMember membership = requireMembership(groupId, callerId);
+        requireNotArchived(group);
 
         if (membership.getRole() == GroupRole.ADMIN) {
             long adminCount = groupMemberRepository.countByGroupIdAndRole(groupId, GroupRole.ADMIN);
@@ -209,6 +231,46 @@ public class GroupService {
         }
 
         groupMemberRepository.delete(membership);
+    }
+
+    /**
+     * Removes a group, choosing the outcome from its own state: refused while a round is
+     * ACTIVE, archived if it has ever moved money, otherwise hard deleted. Returns the archived
+     * group, or empty when the rows are gone. The group row lock serialises this against
+     * RoundService.activate and createRound, which take the same lock.
+     */
+    @Transactional
+    public Optional<GroupSummary> deleteGroup(UUID callerId, UUID groupId) {
+        Group group = lockGroupOrThrow(groupId);
+        requireAdmin(groupId, callerId);
+
+        if (roundRepository.existsByGroupIdAndStatusIn(groupId, List.of(RoundStatus.ACTIVE)))
+            throw new GroupHasRoundInProgressException();
+
+        if (groupRepository.hasLedgerHistory(groupId)) {
+            if (group.isArchived())
+                return Optional.of(groupMapper.toSummary(group));
+
+            // An archived group is read-only, so it must not be left holding a round that
+            // could still be joined or activated.
+            if (roundRepository.existsByGroupIdAndStatusIn(groupId, List.of(RoundStatus.FORMING)))
+                throw new GroupHasFormingRoundException();
+
+            // Truncated to what TIMESTAMPTZ stores, so this response and every later read agree.
+            group.archive(Instant.now(clock).truncatedTo(ChronoUnit.MICROS));
+            groupRepository.save(group);
+            return Optional.of(groupMapper.toSummary(group));
+        }
+
+        // Never activated, so no cycles, money rows or ledger accounts exist. Children first:
+        // every foreign key here is restrict, and will refuse anything missed.
+        roundParticipantRepository.deleteAllByGroupId(groupId);
+        roundRepository.deleteAllByGroupId(groupId);
+        groupInviteRepository.deleteAllByGroupId(groupId);
+        groupMemberRepository.deleteAllByGroupId(groupId);
+        entityManager.detach(group);
+        groupRepository.hardDeleteById(groupId);
+        return Optional.empty();
     }
 
     private List<GroupMemberSummary> memberSummaries(UUID groupId) {
@@ -225,6 +287,27 @@ public class GroupService {
 
     private Group getGroupOrThrow(UUID groupId) {
         return groupRepository.findById(groupId).orElseThrow(GroupNotFoundException::new);
+    }
+
+    /** Every group write takes this lock, so it serialises with deleteGroup and round activation. */
+    private Group lockGroupOrThrow(UUID groupId) {
+        return groupRepository.findByIdForUpdate(groupId).orElseThrow(GroupNotFoundException::new);
+    }
+
+    /**
+     * Loads an invite and locks its group, then re-reads the invite under that lock. A group
+     * deleted in the meantime took its invites with it, so that is a missing invite.
+     */
+    private GroupInvite lockInviteGroup(UUID inviteId) {
+        GroupInvite invite = groupInviteRepository.findById(inviteId).orElseThrow(InviteNotFoundException::new);
+        groupRepository.findByIdForUpdate(invite.getGroupId()).orElseThrow(InviteNotFoundException::new);
+        entityManager.refresh(invite);
+        return invite;
+    }
+
+    private void requireNotArchived(Group group) {
+        if (group.isArchived())
+            throw new GroupArchivedException();
     }
 
     private GroupMember requireMembership(UUID groupId, UUID userId) {

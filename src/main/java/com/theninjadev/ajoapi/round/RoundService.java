@@ -5,7 +5,11 @@ import com.theninjadev.ajoapi.auth.UserMapper;
 import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.auth.UserSummary;
 import com.theninjadev.ajoapi.group.GroupMember;
+import com.theninjadev.ajoapi.group.Group;
+import com.theninjadev.ajoapi.group.GroupArchivedException;
 import com.theninjadev.ajoapi.group.GroupMemberRepository;
+import com.theninjadev.ajoapi.group.GroupNotFoundException;
+import com.theninjadev.ajoapi.group.GroupRepository;
 import com.theninjadev.ajoapi.group.GroupRole;
 import com.theninjadev.ajoapi.group.InsufficientRoleException;
 import com.theninjadev.ajoapi.group.NotGroupMemberException;
@@ -19,6 +23,7 @@ import java.util.stream.Collectors;
 import com.theninjadev.ajoapi.ledger.AccountType;
 import com.theninjadev.ajoapi.ledger.LedgerAccount;
 import com.theninjadev.ajoapi.ledger.LedgerAccountRepository;
+import jakarta.persistence.EntityManager;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,10 +41,15 @@ public class RoundService {
     private final RoundMapper roundMapper;
     private final Clock clock;
     private final LedgerAccountRepository ledgerAccountRepository;
+    private final GroupRepository groupRepository;
+    private final EntityManager entityManager;
 
     @Transactional
     public RoundSummary createRound(UUID callerId, UUID groupId, CreateRoundRequest request) {
         requireGroupAdmin(groupId, callerId);
+        Group group = groupRepository.findByIdForUpdate(groupId).orElseThrow(GroupNotFoundException::new);
+        if (group.isArchived())
+            throw new GroupArchivedException();
 
         if (roundRepository.existsByGroupIdAndStatusIn(groupId, List.of(RoundStatus.FORMING, RoundStatus.ACTIVE)))
             throw new GroupHasActiveRoundException();
@@ -178,6 +188,15 @@ public class RoundService {
     public RoundDetail activate(UUID callerId, UUID roundId) {
         Round round = getRoundOrThrow(roundId);
         requireGroupAdmin(round.getGroupId(), callerId);
+
+        // The group row lock serialises activation against GroupService.deleteGroup. A group
+        // deleted while we waited took this round with it. Otherwise re-read the round, since
+        // it was loaded before the lock.
+        Group group = groupRepository.findByIdForUpdate(round.getGroupId())
+                .orElseThrow(RoundNotFoundException::new);
+        entityManager.refresh(round);
+        if (group.isArchived())
+            throw new GroupArchivedException();
         requireForming(round);
 
         if (round.getFirstPayoutDate() == null)

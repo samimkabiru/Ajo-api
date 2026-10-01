@@ -264,6 +264,13 @@ Written down because it only works if every path follows it:
 3. **A cycle's lock also guards its beneficiary's position.** In an active
    round each participant owns exactly one cycle, so anyone changing a
    position has already locked that participant's cycle.
+4. **The group row guards the group's existence and archive state.** Deleting
+   a group, activating or creating a round in it, and every group write lock
+   the `groups` row first (`findByIdForUpdate`). Without that, a delete and an
+   activation could each read a state that permits them, and commit an active
+   round into a deleted group. (Deleting a group reaches into round tables,
+   so `group` and `round` depend on each other. That cycle is deliberate: the
+   operation spans both, and a coordinator just to hide it would cost more.)
 
 `SELECT ... FOR UPDATE` — a pessimistic write lock — makes the second
 transaction *wait* rather than proceed on stale data.
@@ -643,6 +650,13 @@ Honest edges, worth being able to state:
   fix is a periodic delete of rows whose window and block have both expired.
   None is built: it would be the codebase's first scheduled job, and it would
   not run reliably on a host that spins down.
+- **Archiving can hide a debt from its creditor's default view.** `GET /groups`
+  leaves out archived groups, so when an admin archives a group that still
+  owes a member money, it drops out of that member's list. The obligation
+  survives archiving, and repayment and settlement stay open, but it is only
+  reachable under `?archived=true` and nothing surfaces it. If that ever
+  matters, the fix is for the default list to also include archived groups
+  where the caller has outstanding exposure. Not built.
 
 ---
 
