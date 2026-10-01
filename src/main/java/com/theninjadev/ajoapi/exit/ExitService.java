@@ -53,6 +53,7 @@ public class ExitService {
     private final EntityManager entityManager;
     private final ShortfallDistributor shortfallDistributor;
     private final ShortfallSettlementRepository shortfallSettlementRepository;
+    private final GroupRepository groupRepository;
 
     @Transactional
     public ExitRequestSummary requestExit(UUID callerId, UUID roundId) {
@@ -388,6 +389,7 @@ public class ExitService {
 
         // Phase 1 — discovery, no locks.
         UUID roundId;
+        UUID groupId;
         {
             Cycle discovered = cycleRepository.findById(cycleId)
                     .orElseThrow(CycleNotFoundException::new);
@@ -400,11 +402,15 @@ public class ExitService {
                 throw new InsufficientRoleException();
 
             roundId = round.getId();
+            groupId = round.getGroupId();
         }
 
         entityManager.clear();
 
-        // Phase 2 — lock the cycle, then reload everything fresh.
+        // Phase 2 — the group lock first, as payout takes it: both draw on the round pool,
+        // and would otherwise each read it before the other posts. Then the cycle, then
+        // reload everything fresh.
+        groupRepository.findByIdForUpdate(groupId).orElseThrow(CycleNotFoundException::new);
         Cycle cycle = cycleRepository.findAllByIdForUpdate(List.of(cycleId)).stream()
                 .findFirst()
                 .orElseThrow(CycleNotFoundException::new);

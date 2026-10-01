@@ -10,6 +10,7 @@ import com.theninjadev.ajoapi.contribution.MissingIdempotencyKeyException;
 import com.theninjadev.ajoapi.contribution.RoundNotActiveException;
 import com.theninjadev.ajoapi.group.GroupMember;
 import com.theninjadev.ajoapi.group.GroupMemberRepository;
+import com.theninjadev.ajoapi.group.GroupRepository;
 import com.theninjadev.ajoapi.group.GroupRole;
 import com.theninjadev.ajoapi.group.NotGroupMemberException;
 import com.theninjadev.ajoapi.ledger.*;
@@ -27,6 +28,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import com.theninjadev.ajoapi.swap.PositionSwapRequestRepository;
+import jakarta.persistence.EntityManager;
 import lombok.AllArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -52,6 +54,8 @@ public class PayoutService {
     private final ContributionRepository contributionRepository;
     private final ShortfallSettlementRepository shortfallSettlementRepository;
     private final ShortfallDistributor shortfallDistributor;
+    private final GroupRepository groupRepository;
+    private final EntityManager entityManager;
 
     public List<PayoutSummary> listForRound(UUID callerId, UUID roundId) {
         Round round = getRoundOrThrow(roundId);
@@ -115,6 +119,19 @@ public class PayoutService {
         if (idempotencyKey == null || idempotencyKey.isBlank())
             throw new MissingIdempotencyKeyException();
 
+        // Phase 1 — discovery, no locks. Only the group id survives past the clear().
+        UUID groupId;
+        {
+            Cycle discovered = cycleRepository.findById(cycleId).orElseThrow(CycleNotFoundException::new);
+            groupId = getRoundOrThrow(discovered.getRoundId()).getGroupId();
+        }
+
+        entityManager.clear();
+
+        // Phase 2 — the group lock first: payouts on different cycles lock different cycle
+        // rows but draw on the same pool, so without it two of them read the same balance and
+        // both pay out of it. Then the cycle, then reload everything fresh.
+        groupRepository.findByIdForUpdate(groupId).orElseThrow(CycleNotFoundException::new);
         Cycle cycle = cycleRepository.findAllByIdForUpdate(List.of(cycleId)).stream()
                 .findFirst()
                 .orElseThrow(CycleNotFoundException::new);

@@ -276,6 +276,16 @@ Written down because it only works if every path follows it:
    vanished while waiting is a 404. (Deleting a group reaches into round tables,
    so `group` and `round` depend on each other. That cycle is deliberate: the
    operation spans both, and a coordinator just to hide it would cost more.)
+5. **The group row also guards the round pool, and is locked before cycles.**
+   `payout` and `settleVacantCycle` both size an outflow from the pool's
+   balance. Their cycle locks don't serialise them: two payouts on different
+   cycles lock different rows, read the same balance, and both pay it out.
+   With two cycles overdue and one pot in the pool, that paid out twice what
+   came in. So both take the group lock first, then the cycle, and read the
+   balance only once both are held. One group has at most one active round,
+   so this is effectively a per-round lock at no extra contention. Order is
+   always group → cycles → swap requests; nothing that holds a cycle lock may
+   then ask for the group.
 
 `SELECT ... FOR UPDATE` — a pessimistic write lock — makes the second
 transaction *wait* rather than proceed on stale data.
