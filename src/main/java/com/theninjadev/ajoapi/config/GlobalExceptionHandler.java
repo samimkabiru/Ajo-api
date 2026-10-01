@@ -12,6 +12,9 @@ import com.theninjadev.ajoapi.group.AlreadyGroupMemberException;
 import com.theninjadev.ajoapi.group.CannotRemoveLastAdminException;
 import com.theninjadev.ajoapi.group.CannotRemoveSelfException;
 import com.theninjadev.ajoapi.group.DuplicatePendingInviteException;
+import com.theninjadev.ajoapi.group.GroupArchivedException;
+import com.theninjadev.ajoapi.group.GroupHasFormingRoundException;
+import com.theninjadev.ajoapi.group.GroupHasRoundInProgressException;
 import com.theninjadev.ajoapi.group.GroupNotFoundException;
 import com.theninjadev.ajoapi.group.InsufficientRoleException;
 import com.theninjadev.ajoapi.group.InviteNotFoundException;
@@ -107,6 +110,21 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, e.getMessage());
     }
 
+    @ExceptionHandler(GroupArchivedException.class)
+    public ProblemDetail handleGroupArchived(GroupArchivedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(GroupHasRoundInProgressException.class)
+    public ProblemDetail handleGroupHasRoundInProgress(GroupHasRoundInProgressException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(GroupHasFormingRoundException.class)
+    public ProblemDetail handleGroupHasFormingRound(GroupHasFormingRoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
     @ExceptionHandler(InviteNotFoundException.class)
     public ProblemDetail handleInviteNotFound(InviteNotFoundException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
@@ -144,6 +162,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(RoundNotFormingException.class)
     public ProblemDetail handleRoundNotForming(RoundNotFormingException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(RoundAlreadyActivatedException.class)
+    public ProblemDetail handleRoundAlreadyActivated(RoundAlreadyActivatedException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 

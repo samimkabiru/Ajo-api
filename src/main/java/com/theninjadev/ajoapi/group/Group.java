@@ -38,9 +38,20 @@ public class Group {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "archived_at")
+    private Instant archivedAt;
+
     public void update(String name, String description, Instant updatedAt) {
         this.name = name;
         this.description = description;
         this.updatedAt = updatedAt;
+    }
+
+    public void archive(Instant archivedAt) {
+        this.archivedAt = archivedAt;
+    }
+
+    public boolean isArchived() {
+        return archivedAt != null;
     }
 }

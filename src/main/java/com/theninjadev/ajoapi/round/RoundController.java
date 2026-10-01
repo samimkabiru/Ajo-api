@@ -34,7 +34,7 @@ public class RoundController {
             @ApiResponse(responseCode = "400", description = "Validation failed."),
             @ApiResponse(responseCode = "403", description = "You are not an admin of this group."),
             @ApiResponse(responseCode = "404", description = "You are not a member of this group."),
-            @ApiResponse(responseCode = "409", description = "The group already has a FORMING or ACTIVE round.")
+            @ApiResponse(responseCode = "409", description = "The group already has a FORMING or ACTIVE round, or is archived.")
     })
     @PostMapping("/groups/{groupId}/rounds")
     public ResponseEntity<RoundSummary> createRound(@PathVariable UUID groupId, @Valid @RequestBody CreateRoundRequest request) {
@@ -149,6 +149,21 @@ public class RoundController {
     @PostMapping("/rounds/{roundId}/activate")
     public ResponseEntity<RoundDetail> activate(@PathVariable UUID roundId) {
         return ResponseEntity.ok(roundService.activate(currentUserId(), roundId));
+    }
+
+    @Operation(summary = "Delete a round that never started",
+            description = "Only a round that never moved money (FORMING or CANCELLED) can be deleted. A round that "
+                    + "started is kept for good: there is no archive tier for rounds.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Round and its participants deleted."),
+            @ApiResponse(responseCode = "403", description = "You are not an admin of this group."),
+            @ApiResponse(responseCode = "404", description = "The round does not exist, or you are not a member of its group."),
+            @ApiResponse(responseCode = "409", description = "The round has started, or its group is archived.")
+    })
+    @DeleteMapping("/rounds/{roundId}")
+    public ResponseEntity<Void> deleteRound(@PathVariable UUID roundId) {
+        roundService.deleteRound(currentUserId(), roundId);
+        return ResponseEntity.noContent().build();
     }
 
     private UUID currentUserId() {

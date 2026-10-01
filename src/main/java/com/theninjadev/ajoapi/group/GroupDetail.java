@@ -11,5 +11,6 @@ public record GroupDetail(
         UUID createdBy,
         Instant createdAt,
         Instant updatedAt,
+        Instant archivedAt,
         List<GroupMemberSummary> members
 ) {}

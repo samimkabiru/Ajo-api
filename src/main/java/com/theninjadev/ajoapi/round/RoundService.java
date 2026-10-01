@@ -5,7 +5,11 @@ import com.theninjadev.ajoapi.auth.UserMapper;
 import com.theninjadev.ajoapi.auth.UserRepository;
 import com.theninjadev.ajoapi.auth.UserSummary;
 import com.theninjadev.ajoapi.group.GroupMember;
+import com.theninjadev.ajoapi.group.Group;
+import com.theninjadev.ajoapi.group.GroupArchivedException;
 import com.theninjadev.ajoapi.group.GroupMemberRepository;
+import com.theninjadev.ajoapi.group.GroupNotFoundException;
+import com.theninjadev.ajoapi.group.GroupRepository;
 import com.theninjadev.ajoapi.group.GroupRole;
 import com.theninjadev.ajoapi.group.InsufficientRoleException;
 import com.theninjadev.ajoapi.group.NotGroupMemberException;
@@ -19,6 +23,8 @@ import java.util.stream.Collectors;
 import com.theninjadev.ajoapi.ledger.AccountType;
 import com.theninjadev.ajoapi.ledger.LedgerAccount;
 import com.theninjadev.ajoapi.ledger.LedgerAccountRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,10 +42,14 @@ public class RoundService {
     private final RoundMapper roundMapper;
     private final Clock clock;
     private final LedgerAccountRepository ledgerAccountRepository;
+    private final GroupRepository groupRepository;
+    private final EntityManager entityManager;
 
     @Transactional
     public RoundSummary createRound(UUID callerId, UUID groupId, CreateRoundRequest request) {
         requireGroupAdmin(groupId, callerId);
+        Group group = groupRepository.findByIdForUpdate(groupId).orElseThrow(GroupNotFoundException::new);
+        requireNotArchived(group);
 
         if (roundRepository.existsByGroupIdAndStatusIn(groupId, List.of(RoundStatus.FORMING, RoundStatus.ACTIVE)))
             throw new GroupHasActiveRoundException();
@@ -83,6 +93,7 @@ public class RoundService {
     public RoundSummary updateRound(UUID callerId, UUID roundId, UpdateRoundRequest request) {
         Round round = getRoundOrThrow(roundId);
         requireGroupAdmin(round.getGroupId(), callerId);
+        lockGroupOf(round);
         requireForming(round);
 
         round.updateTerms(request.contributionAmountKobo(), request.firstPayoutDate(), Instant.now(clock));
@@ -95,6 +106,7 @@ public class RoundService {
     public ParticipantSummary addParticipant(UUID callerId, UUID roundId, AddParticipantRequest request) {
         Round round = getRoundOrThrow(roundId);
         requireGroupAdmin(round.getGroupId(), callerId);
+        lockGroupOf(round);
         requireForming(round);
 
         if (!groupMemberRepository.existsByGroupIdAndUserId(round.getGroupId(), request.userId()))
@@ -120,6 +132,7 @@ public class RoundService {
     public void removeParticipant(UUID callerId, UUID roundId, UUID targetUserId) {
         Round round = getRoundOrThrow(roundId);
         requireGroupAdmin(round.getGroupId(), callerId);
+        lockGroupOf(round);
         requireForming(round);
 
         RoundParticipant participant = roundParticipantRepository.findByRoundIdAndUserId(roundId, targetUserId)
@@ -132,6 +145,7 @@ public class RoundService {
     public ParticipantSummary joinRound(UUID callerId, UUID roundId) {
         Round round = getRoundOrThrow(roundId);
         requireGroupMembership(round.getGroupId(), callerId);
+        lockGroupOf(round);
         requireForming(round);
 
         if (roundParticipantRepository.existsByRoundIdAndUserId(roundId, callerId))
@@ -153,6 +167,7 @@ public class RoundService {
     @Transactional
     public void leaveRound(UUID callerId, UUID roundId) {
         Round round = getRoundOrThrow(roundId);
+        lockGroupOf(round);
 
         RoundParticipant participant = roundParticipantRepository.findByRoundIdAndUserId(roundId, callerId)
                 .orElseThrow(RoundParticipantNotFoundException::new);
@@ -166,6 +181,7 @@ public class RoundService {
     public RoundSummary cancelRound(UUID callerId, UUID roundId) {
         Round round = getRoundOrThrow(roundId);
         requireGroupAdmin(round.getGroupId(), callerId);
+        lockGroupOf(round);
         requireForming(round);
 
         round.cancel(Instant.now(clock));
@@ -178,6 +194,9 @@ public class RoundService {
     public RoundDetail activate(UUID callerId, UUID roundId) {
         Round round = getRoundOrThrow(roundId);
         requireGroupAdmin(round.getGroupId(), callerId);
+
+        Group group = lockGroupOf(round);
+        requireNotArchived(group);
         requireForming(round);
 
         if (round.getFirstPayoutDate() == null)
@@ -239,6 +258,27 @@ public class RoundService {
         roundRepository.save(round);
 
         return getRound(callerId, roundId);
+    }
+
+    /**
+     * Hard deletes a round that never moved money. There is no archive tier for rounds: a round
+     * that started is kept, whatever its status.
+     */
+    @Transactional
+    public void deleteRound(UUID callerId, UUID roundId) {
+        Round round = getRoundOrThrow(roundId);
+        requireGroupAdmin(round.getGroupId(), callerId);
+        Group group = lockGroupOf(round);
+
+        // Archived first, so a cancelled round in an archived group gets the true reason.
+        requireNotArchived(group);
+        if (roundRepository.hasLedgerHistory(roundId))
+            throw new RoundAlreadyActivatedException();
+
+        // Never activated, so no cycles or money rows exist. Round-scoped deletes only: the
+        // group-scoped ones would take every round in the group with this one.
+        roundParticipantRepository.deleteAllByRoundId(roundId);
+        roundRepository.delete(round);
     }
 
     private List<RoundParticipant> assignPositions(UUID groupId, List<RoundParticipant> participants) {
@@ -309,6 +349,31 @@ public class RoundService {
 
     private Round getRoundOrThrow(UUID roundId) {
         return roundRepository.findById(roundId).orElseThrow(RoundNotFoundException::new);
+    }
+
+    /**
+     * Takes the group row lock that serialises every write to a round with round deletion,
+     * group deletion and activation, then re-reads the round, which was loaded before the lock.
+     * A round or group removed while we waited is a missing round.
+     */
+    private Group lockGroupOf(Round round) {
+        Group group = groupRepository.findByIdForUpdate(round.getGroupId())
+                .orElseThrow(RoundNotFoundException::new);
+        refreshOrNotFound(round);
+        return group;
+    }
+
+    private void refreshOrNotFound(Round round) {
+        try {
+            entityManager.refresh(round);
+        } catch (EntityNotFoundException e) {
+            throw new RoundNotFoundException();
+        }
+    }
+
+    private void requireNotArchived(Group group) {
+        if (group.isArchived())
+            throw new GroupArchivedException();
     }
 
     private void requireForming(Round round) {
