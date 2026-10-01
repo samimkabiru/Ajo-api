@@ -14,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -244,5 +245,83 @@ class GroupControllerTest extends AbstractIntegrationTest {
                         .header("Authorization", "Bearer " + b.accessToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.user.id == '" + b.id() + "')].role").value("MEMBER"));
+    }
+
+    // Inviter's name on invites. The invitee is not a member yet, so they get a name only:
+    // never the inviter's phone or email.
+
+    @Test
+    void myInvitesCarryTheRightInviterNameForEachGroup() throws Exception {
+        var alice = registerUser("08021110030", "Alice Okafor");
+        var bola = registerUser("08021110031", "Bola Adeyemi");
+        var invitee = registerUser("08021110032", "Ike");
+        var aliceGroup = createGroup(alice, "Alice's Ajo");
+        var bolaGroup = createGroup(bola, "Bola's Ajo");
+        inviteAndExpect(alice, aliceGroup, invitee.phone(), 201);
+        inviteAndExpect(bola, bolaGroup, invitee.phone(), 201);
+
+        var body = mockMvc.perform(get("/groups/my-invites")
+                        .header("Authorization", "Bearer " + invitee.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[?(@.groupId == '" + aliceGroup + "')].inviterName").value("Alice Okafor"))
+                .andExpect(jsonPath("$[?(@.groupId == '" + aliceGroup + "')].invitedBy").value(alice.id().toString()))
+                .andExpect(jsonPath("$[?(@.groupId == '" + bolaGroup + "')].inviterName").value("Bola Adeyemi"))
+                .andExpect(jsonPath("$[?(@.groupId == '" + bolaGroup + "')].invitedBy").value(bola.id().toString()))
+                .andReturn().getResponse().getContentAsString();
+
+        assertNoInviterContactDetails(body, alice, bola);
+    }
+
+    @Test
+    void inviteResponseCarriesTheInviterName() throws Exception {
+        var alice = registerUser("08021110033", "Alice Okafor");
+        var invitee = registerUser("08021110034", "Ike");
+        var groupId = createGroup(alice, "Alice's Ajo");
+
+        var body = mockMvc.perform(post("/groups/" + groupId + "/invites")
+                        .header("Authorization", "Bearer " + alice.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new InviteMemberRequest(invitee.phone()))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.inviterName").value("Alice Okafor"))
+                .andExpect(jsonPath("$.invitedBy").value(alice.id().toString()))
+                .andReturn().getResponse().getContentAsString();
+
+        assertNoInviterContactDetails(body, alice);
+    }
+
+    @Test
+    void declineAndRevokeResponsesCarryTheInviterName() throws Exception {
+        var alice = registerUser("08021110035", "Alice Okafor");
+        var decliner = registerUser("08021110036", "Ike");
+        var other = registerUser("08021110037", "Uche");
+        var groupId = createGroup(alice, "Alice's Ajo");
+        var declined = inviteAndExpect(alice, groupId, decliner.phone(), 201);
+        var revoked = inviteAndExpect(alice, groupId, other.phone(), 201);
+
+        var declineBody = mockMvc.perform(post("/groups/invites/" + declined + "/decline")
+                        .header("Authorization", "Bearer " + decliner.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.inviterName").value("Alice Okafor"))
+                .andExpect(jsonPath("$.invitedBy").value(alice.id().toString()))
+                .andReturn().getResponse().getContentAsString();
+
+        var revokeBody = mockMvc.perform(post("/groups/invites/" + revoked + "/revoke")
+                        .header("Authorization", "Bearer " + alice.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.inviterName").value("Alice Okafor"))
+                .andExpect(jsonPath("$.invitedBy").value(alice.id().toString()))
+                .andReturn().getResponse().getContentAsString();
+
+        assertNoInviterContactDetails(declineBody, alice);
+        assertNoInviterContactDetails(revokeBody, alice);
+    }
+
+    /** The invite's own phone is the invitee's; nothing in the body may be the inviter's phone or any email. */
+    private void assertNoInviterContactDetails(String body, TestUser... inviters) {
+        for (TestUser inviter : inviters)
+            assertThat(body).doesNotContain(inviter.phone());
+        assertThat(body).doesNotContainIgnoringCase("email");
     }
 }

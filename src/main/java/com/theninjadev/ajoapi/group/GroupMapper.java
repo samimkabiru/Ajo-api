@@ -9,7 +9,8 @@ public interface GroupMapper {
 
     GroupSummary toSummary(Group group);
 
-    GroupInviteSummary toInviteSummary(GroupInvite invite);
+    @Mapping(target = "inviterName", source = "inviterName")
+    GroupInviteSummary toInviteSummary(GroupInvite invite, String inviterName);
 
     @Mapping(target = "user", source = "user")
     @Mapping(target = "role", source = "member.role")

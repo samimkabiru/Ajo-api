@@ -8,6 +8,8 @@ public record GroupInviteSummary(
         UUID groupId,
         String phone,
         UUID invitedBy,
+        // A name, not a UserSummary: the invitee isn't a member yet, so the inviter's phone and email aren't theirs to see.
+        String inviterName,
         InviteStatus status,
         Instant createdAt,
         Instant respondedAt

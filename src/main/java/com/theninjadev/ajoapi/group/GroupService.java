@@ -124,13 +124,21 @@ public class GroupService {
                 .createdAt(Instant.now(clock))
                 .build());
 
-        return groupMapper.toInviteSummary(invite);
+        return groupMapper.toInviteSummary(invite, getCallerOrThrow(callerId).getFullName());
     }
 
     public List<GroupInviteSummary> listMyInvites(UUID callerId) {
         User caller = getCallerOrThrow(callerId);
-        return groupInviteRepository.findPendingToJoinableGroups(caller.getPhone()).stream()
-                .map(groupMapper::toInviteSummary)
+        List<GroupInvite> invites = groupInviteRepository.findPendingToJoinableGroups(caller.getPhone());
+
+        // One query for every inviter, not one per invite.
+        Map<UUID, String> inviterNames = userRepository.findAllById(
+                        invites.stream().map(GroupInvite::getInvitedBy).distinct().toList())
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(User::getId, User::getFullName));
+
+        return invites.stream()
+                .map(invite -> groupMapper.toInviteSummary(invite, inviterNames.get(invite.getInvitedBy())))
                 .toList();
     }
 
@@ -169,7 +177,7 @@ public class GroupService {
         invite.decline(Instant.now(clock));
         groupInviteRepository.save(invite);
 
-        return groupMapper.toInviteSummary(invite);
+        return groupMapper.toInviteSummary(invite, inviterName(invite));
     }
 
     @Transactional
@@ -184,7 +192,7 @@ public class GroupService {
         invite.revoke(Instant.now(clock));
         groupInviteRepository.save(invite);
 
-        return groupMapper.toInviteSummary(invite);
+        return groupMapper.toInviteSummary(invite, inviterName(invite));
     }
 
     public List<GroupMemberSummary> listMembers(UUID callerId, UUID groupId) {
@@ -340,6 +348,13 @@ public class GroupService {
                 .orElseThrow(() -> new InsufficientAuthenticationException("Authenticated user no longer exists"));
         if (!user.isPhoneVerified())
             throw new PhoneNotVerifiedException();
+    }
+
+    /** group_invites.invited_by references users(id), so the inviter always exists. */
+    private String inviterName(GroupInvite invite) {
+        return userRepository.findById(invite.getInvitedBy())
+                .orElseThrow(() -> new IllegalStateException("Inviter not found"))
+                .getFullName();
     }
 
     private User getCallerOrThrow(UUID callerId) {
