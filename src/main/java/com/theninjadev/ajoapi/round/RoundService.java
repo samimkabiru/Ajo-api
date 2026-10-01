@@ -330,8 +330,10 @@ public class RoundService {
                 .stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
 
+        LocalDate today = LocalDate.now(clock);
         return cycles.stream()
-                .map(cycle -> roundMapper.toCycleSummary(cycle, beneficiarySummary(cycle, participantsById, usersById)))
+                .map(cycle -> roundMapper.toCycleSummary(
+                        cycle, beneficiarySummary(cycle, participantsById, usersById), today))
                 .toList();
     }
 

@@ -55,6 +55,20 @@ public class Cycle {
     @Column(name = "vacated_by_exit_id")
     private UUID vacatedByExitId;
 
+    /** Whether contributions are accepted on this date. The one place the opening-date test lives. */
+    public boolean isOpenForContributionsAt(LocalDate today) {
+        return !today.isBefore(opensOn);
+    }
+
+    /**
+     * What the API reports: SCHEDULED reads as OPEN once the cycle can take contributions. The
+     * stored column means "has anyone contributed yet", which contribute relies on, so it is left
+     * alone. PAID, VACANT and SETTLED are real events and always report themselves.
+     */
+    public CycleStatus effectiveStatusAt(LocalDate today) {
+        return status == CycleStatus.SCHEDULED && isOpenForContributionsAt(today) ? CycleStatus.OPEN : status;
+    }
+
     public void open() {
         this.status = CycleStatus.OPEN;
     }

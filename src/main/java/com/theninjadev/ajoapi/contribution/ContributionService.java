@@ -129,7 +129,7 @@ public class ContributionService {
         if (!targetParticipant.getRoundId().equals(cycle.getRoundId()))
             throw new ParticipantNotInRoundException();
 
-        if (LocalDate.now(clock).isBefore(cycle.getOpensOn()))
+        if (!cycle.isOpenForContributionsAt(LocalDate.now(clock)))
             throw new CycleNotOpenException();
 
         if (cycle.getStatus() == CycleStatus.PAID)
