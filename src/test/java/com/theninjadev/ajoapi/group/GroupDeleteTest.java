@@ -10,6 +10,7 @@ import com.theninjadev.ajoapi.testsupport.TestUser;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -347,19 +348,42 @@ class GroupDeleteTest extends AbstractIntegrationTest {
     }
 
     // ------------------------------------------------------------------
-    // Concurrency
+    // Delete vs activation: each ordering forced, then the race itself
     // ------------------------------------------------------------------
 
     @Test
-    void deleteRacingActivationEndsInExactlyOneCoherentState() throws Exception {
+    void activateThenDeleteRefusesAndLeavesTheActiveRound() throws Exception {
+        var r = formingRoundReadyToActivate("Activated first");
+
+        client.activate(r.admin(), r.roundId());
+        mockMvc.perform(authed(delete("/groups/" + r.groupId()), r.admin()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value(IN_PROGRESS));
+
+        assertActivatedAndIntact(r, "activate then delete");
+    }
+
+    @Test
+    void deleteThenActivateFindsNothing() throws Exception {
+        var r = formingRoundReadyToActivate("Deleted first");
+
+        deleteGroup(r.admin(), r.groupId(), 204);
+        client.activateAndExpect(r.admin(), r.roundId(), 404);
+
+        assertDeletedWithItsRound(r, "delete then activate");
+    }
+
+    /**
+     * Both orderings are proven by the two tests above. This one proves only that no
+     * interleaving produces anything else — it does not care which side wins, since the
+     * scheduler may consistently favour one.
+     */
+    @Test
+    void deleteRacingActivationNeverLeavesAnIncoherentState() throws Exception {
+        Map<String, Integer> tally = new TreeMap<>();
+
         for (int i = 0; i < 8; i++) {
-            var admin = client.registerUser("Alice");
-            var ada = client.registerUser("Ada");
-            var groupId = client.createGroup(admin, "Race " + i);
-            client.addToGroup(admin, groupId, ada);
-            var roundId = client.createRound(admin, groupId, AMOUNT, PAST_START);
-            client.addParticipant(admin, roundId, admin);
-            client.addParticipant(admin, roundId, ada);
+            var r = formingRoundReadyToActivate("Race " + i);
 
             ExecutorService pool = Executors.newFixedThreadPool(2);
             CountDownLatch ready = new CountDownLatch(2);
@@ -368,12 +392,12 @@ class GroupDeleteTest extends AbstractIntegrationTest {
             Callable<Integer> deletes = () -> {
                 ready.countDown();
                 go.await();
-                return statusOf(authed(delete("/groups/" + groupId), admin));
+                return statusOf(authed(delete("/groups/" + r.groupId()), r.admin()));
             };
             Callable<Integer> activates = () -> {
                 ready.countDown();
                 go.await();
-                return statusOf(authed(post("/rounds/" + roundId + "/activate"), admin));
+                return statusOf(authed(post("/rounds/" + r.roundId() + "/activate"), r.admin()));
             };
 
             int deleteStatus;
@@ -391,29 +415,61 @@ class GroupDeleteTest extends AbstractIntegrationTest {
                 pool.shutdownNow();
             }
 
-            boolean groupExists = count("SELECT count(*) FROM groups WHERE id = ?", groupId) == 1;
-            long roundPools = count(
-                    "SELECT count(*) FROM ledger_accounts WHERE account_type = 'ROUND_POOL' AND owner_id = ?", roundId);
+            String outcome = "activate=" + activateStatus + ",delete=" + deleteStatus;
+            tally.merge(outcome, 1, Integer::sum);
+            String context = "iteration %d, outcomes so far %s".formatted(i, tally);
 
-            if (activateStatus == 200) {
-                // Activation won: the delete saw an active round and was turned away.
-                assertThat(deleteStatus).isEqualTo(409);
-                assertThat(groupExists).isTrue();
-                assertThat(archivedAt(groupId)).isNull();
-                assertThat(jdbc.queryForObject("SELECT status FROM rounds WHERE id = ?", String.class, roundId))
-                        .isEqualTo(RoundStatus.ACTIVE.name());
-                assertThat(roundPools).isEqualTo(1);
-                assertThat(count("SELECT count(*) FROM cycles WHERE round_id = ?", roundId)).isEqualTo(2);
-            } else {
-                // Delete won: the round went with the group, and activation found nothing.
-                assertThat(List.of(deleteStatus, activateStatus)).containsExactly(204, 404);
-                assertThat(groupExists).isFalse();
-                assertThat(count("SELECT count(*) FROM rounds WHERE id = ?", roundId)).isZero();
-                assertThat(count("SELECT count(*) FROM round_participants WHERE round_id = ?", roundId)).isZero();
-                assertThat(count("SELECT count(*) FROM cycles WHERE round_id = ?", roundId)).isZero();
-                assertThat(roundPools).isZero();
-            }
+            assertThat(outcome).as(context).isIn(ACTIVATE_WON, DELETE_WON);
+            if (outcome.equals(ACTIVATE_WON))
+                assertActivatedAndIntact(r, context);
+            else
+                assertDeletedWithItsRound(r, context);
         }
+
+        System.out.println("deleteRacingActivation outcomes: " + tally);
+        assertThat(tally.keySet()).as("outcomes %s", tally).isSubsetOf(ACTIVATE_WON, DELETE_WON);
+    }
+
+    private static final String ACTIVATE_WON = "activate=200,delete=409";
+    private static final String DELETE_WON = "activate=404,delete=204";
+
+    private record FormingRound(UUID groupId, UUID roundId, TestUser admin) {}
+
+    /** A two-member group with a FORMING round that has everything it needs to activate. */
+    private FormingRound formingRoundReadyToActivate(String name) throws Exception {
+        var admin = client.registerUser("Alice");
+        var ada = client.registerUser("Ada");
+        var groupId = client.createGroup(admin, name);
+        client.addToGroup(admin, groupId, ada);
+        var roundId = client.createRound(admin, groupId, AMOUNT, PAST_START);
+        client.addParticipant(admin, roundId, admin);
+        client.addParticipant(admin, roundId, ada);
+        return new FormingRound(groupId, roundId, admin);
+    }
+
+    /** Activation won: the group is untouched and the round is fully active. */
+    private void assertActivatedAndIntact(FormingRound r, String context) {
+        assertThat(count("SELECT count(*) FROM groups WHERE id = ?", r.groupId())).as(context).isEqualTo(1);
+        assertThat(archivedAt(r.groupId())).as(context).isNull();
+        assertThat(jdbc.queryForObject("SELECT status FROM rounds WHERE id = ?", String.class, r.roundId()))
+                .as(context).isEqualTo(RoundStatus.ACTIVE.name());
+        assertThat(roundPools(r.roundId())).as(context).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM cycles WHERE round_id = ?", r.roundId())).as(context).isEqualTo(2);
+    }
+
+    /** Delete won: the round went with the group, and nothing was ever activated. */
+    private void assertDeletedWithItsRound(FormingRound r, String context) {
+        assertThat(count("SELECT count(*) FROM groups WHERE id = ?", r.groupId())).as(context).isZero();
+        assertThat(count("SELECT count(*) FROM rounds WHERE id = ?", r.roundId())).as(context).isZero();
+        assertThat(count("SELECT count(*) FROM round_participants WHERE round_id = ?", r.roundId()))
+                .as(context).isZero();
+        assertThat(count("SELECT count(*) FROM cycles WHERE round_id = ?", r.roundId())).as(context).isZero();
+        assertThat(roundPools(r.roundId())).as(context).isZero();
+    }
+
+    private long roundPools(UUID roundId) {
+        return count("SELECT count(*) FROM ledger_accounts WHERE account_type = 'ROUND_POOL' AND owner_id = ?",
+                roundId);
     }
 
     // ------------------------------------------------------------------
