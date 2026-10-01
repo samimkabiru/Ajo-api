@@ -265,10 +265,15 @@ Written down because it only works if every path follows it:
    round each participant owns exactly one cycle, so anyone changing a
    position has already locked that participant's cycle.
 4. **The group row guards the group's existence and archive state.** Deleting
-   a group, activating or creating a round in it, and every group write lock
-   the `groups` row first (`findByIdForUpdate`). Without that, a delete and an
-   activation could each read a state that permits them, and commit an active
-   round into a deleted group. (Deleting a group reaches into round tables,
+   a group, creating, activating or deleting a round in it, every write to a
+   FORMING round (terms, joining, leaving, adding or removing participants,
+   cancelling) and every group write lock the `groups` row first
+   (`findByIdForUpdate`). Without that, a delete and an activation could each
+   read a state that permits them, and commit an active round into a deleted
+   group; or a join could land between activation reading the participant
+   list and committing, leaving a participant with no position and no cycle.
+   The round, read before the lock, is re-read under it, and a round that
+   vanished while waiting is a 404. (Deleting a group reaches into round tables,
    so `group` and `round` depend on each other. That cycle is deliberate: the
    operation spans both, and a coordinator just to hide it would cost more.)
 

@@ -30,4 +30,9 @@ public interface RoundParticipantRepository extends JpaRepository<RoundParticipa
     @Modifying
     @Query("delete from RoundParticipant rp where rp.roundId in (select r.id from Round r where r.groupId = :groupId)")
     void deleteAllByGroupId(@Param("groupId") UUID groupId);
+
+    /** One round only. Not to be confused with deleteAllByGroupId, which takes every round in the group. */
+    @Modifying
+    @Query("delete from RoundParticipant rp where rp.roundId = :roundId")
+    void deleteAllByRoundId(@Param("roundId") UUID roundId);
 }

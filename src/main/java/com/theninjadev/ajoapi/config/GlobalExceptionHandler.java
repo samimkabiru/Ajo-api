@@ -165,6 +165,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 
+    @ExceptionHandler(RoundAlreadyActivatedException.class)
+    public ProblemDetail handleRoundAlreadyActivated(RoundAlreadyActivatedException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
     @ExceptionHandler(GroupHasActiveRoundException.class)
     public ProblemDetail handleGroupHasActiveRound(GroupHasActiveRoundException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());

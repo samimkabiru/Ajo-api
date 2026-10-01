@@ -151,6 +151,21 @@ public class RoundController {
         return ResponseEntity.ok(roundService.activate(currentUserId(), roundId));
     }
 
+    @Operation(summary = "Delete a round that never started",
+            description = "Only a round that never moved money (FORMING or CANCELLED) can be deleted. A round that "
+                    + "started is kept for good: there is no archive tier for rounds.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Round and its participants deleted."),
+            @ApiResponse(responseCode = "403", description = "You are not an admin of this group."),
+            @ApiResponse(responseCode = "404", description = "The round does not exist, or you are not a member of its group."),
+            @ApiResponse(responseCode = "409", description = "The round has started, or its group is archived.")
+    })
+    @DeleteMapping("/rounds/{roundId}")
+    public ResponseEntity<Void> deleteRound(@PathVariable UUID roundId) {
+        roundService.deleteRound(currentUserId(), roundId);
+        return ResponseEntity.noContent().build();
+    }
+
     private UUID currentUserId() {
         return (UUID) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     }
