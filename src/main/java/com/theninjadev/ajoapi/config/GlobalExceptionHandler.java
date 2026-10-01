@@ -47,6 +47,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * Every error leaves the API as an RFC 9457 ProblemDetail. Extending
@@ -475,6 +476,19 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(com.theninjadev.ajoapi.verification.PasswordResetFailedException.class)
     public ProblemDetail handlePasswordResetFailed(com.theninjadev.ajoapi.verification.PasswordResetFailedException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    // ---- Unknown route. Spring's own detail talks about static resources, which means nothing
+    // to a client of a JSON API. Name the path the caller sent, and nothing else.
+
+    @Override
+    protected ResponseEntity<Object> handleNoResourceFoundException(NoResourceFoundException e,
+                                                                    HttpHeaders headers,
+                                                                    HttpStatusCode status,
+                                                                    WebRequest request) {
+        String path = e.getResourcePath().startsWith("/") ? e.getResourcePath() : "/" + e.getResourcePath();
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "No endpoint at " + path);
+        return handleExceptionInternal(e, problem, headers, HttpStatus.NOT_FOUND, request);
     }
 
     // ---- Validation: a readable detail plus one entry per field.

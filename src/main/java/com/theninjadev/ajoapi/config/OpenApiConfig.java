@@ -52,8 +52,7 @@ public class OpenApiConfig {
                                 whole pot, until everyone has collected exactly once. There is no \
                                 interest and no fee: the circle moves money through time, not between \
                                 people. All amounts are integer kobo (₦10,000 is 1000000).""")
-                        // TODO: fill in contact details.
-                        .contact(new Contact().name("").email("").url("")))
+                        .contact(new Contact().name("theNinjaDev").url("https://github.com/samimkabiru/Ajo-api")))
                 .components(new Components().addSchemas(PROBLEM_DETAIL, problemDetailSchema()));
     }
 

@@ -43,20 +43,23 @@ The domain is complete, tested and deployed. Every rule above is implemented end
 - [x] Authentication — phone number + password, JWT access tokens, refresh-token rotation, `GET /me`
 - [x] Phone verification by one-time SMS code; creating or joining a group requires a verified phone
 - [x] Password reset by one-time SMS code, built so no response reveals whether a number has an account
-- [x] Groups and membership — invites by phone number, admin and member roles
-- [x] Rounds, participants and cycles — the full payout schedule is generated when a round activates
+- [x] Login rate limiting — per phone number, registered or not: five failures in fifteen minutes blocks that number for fifteen
+- [x] Groups and membership — invites by phone number (showing who invited you), admin and member roles
+- [x] Removing a group — deleted outright if no money ever moved through it, archived (read-only, still readable) if it has history, refused while a round is in progress
+- [x] Rounds, participants and cycles — the full payout schedule is generated when a round activates; a cycle reports itself open from its opening date
+- [x] Deleting a round that never started — a forming or cancelled round; one that moved money is kept for good
 - [x] Contributions — idempotency keys, one contribution per member per cycle
 - [x] Payouts — capped by what the pool actually holds, with shortfall claims when a pot comes up short
 - [x] Position swaps — mutual consent, safe under concurrent acceptance
 - [x] Exits — gated on what the leaver owes or is owed; debts block exit until repaid
 - [x] Buy-ins — a replacement takes over a leaver's slot and history
-- [x] Vacant-cycle settlement — a leaver's unclaimed cycle funds their refund and the shortfalls they caused
+- [x] Vacant-cycle settlement — a leaver's unclaimed cycle funds their refund and the shortfalls they caused, up to what the pool still holds
 - [x] Arrears netting — missed contributions are withheld from the defaulter's own payout
 - [x] OpenAPI docs with Swagger UI, and one consistent error format (RFC 9457 Problem Details) everywhere
 - [x] CI on every push and pull request (GitHub Actions, full test suite against real Postgres)
 - [x] Dockerised and deployed (Render + Neon Postgres), with health probes
 
-By the numbers: **326 tests** across 31 test classes, **17 Flyway migrations**, and **64 documented endpoints**.
+By the numbers: **412 tests** across 41 test classes, **19 Flyway migrations**, and **66 documented endpoints**.
 
 ### What is and isn't real yet
 
@@ -97,19 +100,32 @@ All amounts are stored as `BIGINT` in kobo (₦1 = 100 kobo). No floating-point 
 Contributions, payouts, repayments and buy-ins all require an `Idempotency-Key`. Retrying the same request (a flaky network, a double-tap) returns the original result instead of posting twice. The database backs this up: a key can be used only once, a member can contribute to a cycle only once, and a cycle can be paid out only once.
 
 **Row locking where money changes hands.**
-Payouts, position swaps, exits, buy-ins and settlement take a database row lock on the cycles involved, so two simultaneous requests can't both see the "old" state and double-post. Contributions don't need one — the one-per-member-per-cycle constraint already makes a duplicate impossible.
+Payouts, position swaps, exits, buy-ins and settlement take a database row lock on the cycles involved, so two simultaneous requests can't both see the "old" state and double-post. Anything that sizes a payment from the round pool's balance — payouts and settlement — first locks the group row, which serialises every draw on that pool. Locks are always taken in the same order: group, then cycles, then swap requests. Contributions, repayments and buy-ins don't need the group lock, because none of them sizes an amount from the pool's balance: the first two only add money, and a buy-in pays the leaver exactly what the replacement pays in.
+
+**Two overdraws, found by tests.**
+Both of these were caught by tests written to try to break the money rules, not by reading the code.
+
+*Two payouts at once.* Each payout locked only its own cycle, but sized itself from the balance of the whole round pool. When two cycles were due at the same time and the pool held enough for one, two payouts on different cycles locked different rows, read the same balance, and both paid in full — twice what came in. A test firing both at once broke the invariant in seven runs out of eight. The fix is the group-row lock above: payouts on the same round now queue, and the second sees the pool the first left behind.
+
+*Payout, then settlement.* A payout caps at the whole pool, so a short cycle can take money that was paid into a vacant cycle. Settlement, though, sized the leaver's refund from the vacant cycle's own contribution records, which didn't know the money had gone — so settling afterwards refunded funds that were no longer there, and the pool went negative. No concurrency was needed, only that order. The fix: settlement now spends no more than the pool actually holds, and whatever it can't refund becomes a shortfall claim for the leaver — the same way a beneficiary is owed the rest of a short pot.
 
 **The payout is capped by what the pool holds.**
 The platform never pays out money it did not receive. If nine of ten members paid, the beneficiary gets nine shares, and a shortfall claim records the group's debt to them. The amount is always computed server-side — never accepted from the client. This one rule is what makes the ledger load-bearing rather than decorative.
 
 **A vacant cycle settles exactly what it owes.**
-When a member leaves before collecting and nobody replaces them, their cycle keeps collecting from everyone else and pays out to nobody. That unclaimed pot is exactly enough to refund the leaver and cover the shortfalls their absence caused — not by coincidence of the numbers, but as an identity that holds for any group size, position and exit month. Settlement pays the refund first, then the claims oldest first, and can run again as later claims arrive.
+When a member leaves before collecting and nobody replaces them, their cycle keeps collecting from everyone else and pays out to nobody. That unclaimed pot is exactly enough to refund the leaver and cover the shortfalls their absence caused — not by coincidence of the numbers, but as an identity that holds for any group size, position and exit month. Settlement pays the refund first, then the claims oldest first, and can run again as later claims arrive. If an earlier payout already drew on that pot (see the overdraws above), settlement pays what the pool still holds and the group owes the leaver the rest by claim.
 
 **Arrears are withheld from the defaulter's own payout.**
 A member who misses a month and later collects has the missed amount withheld, and that money settles the claims their absence caused. It moves the risk to where the group already holds the defaulter's money: someone who misses payments *before* collecting is barely a risk at all. Arrears are counted as missed cycles, not a subtracted total, and a member's own cycle is excluded so nobody is ever charged twice for the same missed month.
 
 **Position swaps under concurrency: pessimistic locks and deferred constraints.**
 Two members accepting conflicting swaps at the same moment must not both succeed. Every path that changes a position locks the cycles involved, always in the same order, so concurrent swaps queue instead of racing or deadlocking. And because exchanging two positions briefly breaks the "each member collects exactly once" uniqueness rule mid-update, those constraints are declared deferrable and checked once, at commit, against the finished state.
+
+**One permanent admin.**
+A group has one admin, its creator, for good — there is no promoting or handing over the role. That mirrors how an *alajo* works: the circle exists because people trust that particular person with their money, and that kind of trust isn't passed on by election. The consequence is deliberate: the sole admin can't leave while other members remain.
+
+**Unknown routes are a 401 before they are a 404.**
+Without a valid token, every path gets 401, real or not. Answering 404 for paths that don't exist would let anyone map which ones do; 401 for everything reveals nothing. It's the same principle as password reset returning the same `202` whether or not a number is registered — and recorded here so nobody "fixes" it into a more honest-looking 404. With a token, an unknown path is a 404 like any other error.
 
 **Phone number as identity.**
 Users sign in with their phone number (normalised to E.164), matching how Nigerian fintech apps work. Email is optional. Phone verification and password reset use SMS one-time codes — stored only as BCrypt hashes, rate-limited, and capped on attempts. Password reset returns the same response whether or not a number has an account, and takes the same work either way, so it can't be used to discover who is registered.
@@ -191,14 +207,12 @@ Render's health check path is `/actuator/health/liveness`. It does not touch the
 What's genuinely left:
 
 1. **A real SMS provider** — replacing `LoggingSmsSender`, sending asynchronously so a slow provider can't reintroduce a timing difference into password reset
-2. **Login rate limiting** — the one remaining brute-force surface; one-time codes are already rate-limited and attempt-capped
-3. **Admin role promotion** — today every group has exactly one admin, its creator, who can therefore never leave
-4. **Concurrency tests for contributions and payouts** — they are protected by idempotency keys, unique constraints and row locks, but only swaps, registration and the one-time-code flows are currently tested under concurrent requests
-5. **Pagination** — list endpoints currently return everything
-6. **Frontend** — Next.js web app, later a PWA
-7. **Real money** — Paystack for collections (with webhooks), Paystack Transfers for payouts to members' bank accounts, and reconciliation against the ledger
+2. **Concurrency tests for contributions** — protected by idempotency keys and a one-per-member-per-cycle constraint, but not yet tested under concurrent requests the way payouts, swaps, deletions, registration and the one-time-code flows are
+3. **Pagination** — list endpoints currently return everything
+4. **Frontend** — Next.js web app, later a PWA
+5. **Real money** — Paystack for collections (with webhooks), Paystack Transfers for payouts to members' bank accounts, and reconciliation against the ledger
 
-**Known limits**, recorded in [DESIGN.md](DESIGN.md#15-known-limits): payouts draw on the whole round pool rather than a separate pot per cycle; beyond blocking their exit, there is no automatic recovery from a member who defaults after collecting (guarantors are the obvious next step); settlement is triggered by an admin, not a scheduled job; and there is a single currency. Access tokens already issued also remain valid until they expire (15 minutes) after a password reset — the reset revokes every refresh token, but short-lived access tokens are stateless.
+**Known limits**, recorded in [DESIGN.md](DESIGN.md#15-known-limits): payouts draw on the whole round pool rather than a separate pot per cycle, so a leaver can be refunded part now and owed the rest by claim; beyond blocking their exit, there is no automatic recovery from a member who defaults after collecting (guarantors are the obvious next step); settlement is triggered by an admin, not a scheduled job; and there is a single currency. Access tokens already issued also remain valid until they expire (15 minutes) after a password reset — the reset revokes every refresh token, but short-lived access tokens are stateless.
 
 **Deliberately deferred:** Google OAuth (phone is the primary identity), email verification, biometrics, and a native mobile app.
 

@@ -109,6 +109,24 @@ class ErrorResponseShapeTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void unknownRouteDetailNamesOnlyThePath() throws Exception {
+        expectProblem(mockMvc.perform(authed(get("/nope"))), 404, "/nope")
+                .andExpect(jsonPath("$.detail").value("No endpoint at /nope"));
+    }
+
+    @Test
+    void aMalformedPathVariableIsStillA400NotAnUnknownRoute() throws Exception {
+        expectProblem(mockMvc.perform(authed(get("/groups/not-a-uuid"))), 400, "/groups/not-a-uuid");
+    }
+
+    @Test
+    void realUnauthenticatedRoutesStillRespond() throws Exception {
+        mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+        int swagger = mockMvc.perform(get("/swagger-ui.html")).andReturn().getResponse().getStatus();
+        assertThat(swagger).as("swagger-ui.html serves or redirects into the UI").isBetween(200, 399);
+    }
+
+    @Test
     void wrongMethodIs405() throws Exception {
         expectProblem(mockMvc.perform(get("/auth/login")), 405, "/auth/login");
     }
