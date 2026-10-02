@@ -240,6 +240,26 @@ class GroupDeleteTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void archivedGroupStillListsItsInvitesToTheAdmin() throws Exception {
+        var f = completedGroup();
+        deleteGroupExpectingArchive(f.admin(), f.groupId());
+
+        var result = mockMvc.perform(authed(get("/groups/" + f.groupId() + "/invites"), f.admin()))
+                .andExpect(status().isOk())
+                .andReturn();
+        var invites = List.of(objectMapper.readValue(
+                result.getResponse().getContentAsString(), GroupInviteSummary[].class));
+
+        // Ada's accepted invite from addToGroup, and Ike's that is still pending.
+        assertThat(invites).extracting(GroupInviteSummary::phone)
+                .containsExactlyInAnyOrder(f.ada().phone(), f.invitee().phone());
+        assertThat(invites).filteredOn(invite -> invite.id().equals(f.inviteId()))
+                .singleElement()
+                .extracting(GroupInviteSummary::status)
+                .isEqualTo(InviteStatus.PENDING);
+    }
+
+    @Test
     void pendingInviteToAnArchivedGroupIsHiddenFromTheInvitee() throws Exception {
         var f = completedGroup();
         assertThat(myInviteIds(f.invitee())).contains(f.inviteId());

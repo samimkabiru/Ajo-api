@@ -14,6 +14,9 @@ public interface GroupInviteRepository extends JpaRepository<GroupInvite, UUID> 
 
     List<GroupInvite> findByPhoneAndStatus(String phone, InviteStatus status);
 
+    /** Every invite the group has sent, whatever its status. Id breaks a same-microsecond tie. */
+    List<GroupInvite> findByGroupIdOrderByCreatedAtDescIdDesc(UUID groupId);
+
     /** Pending invites to this phone, leaving out groups that are archived and can't be joined. */
     @Query("""
             select i from GroupInvite i

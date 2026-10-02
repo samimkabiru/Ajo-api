@@ -142,6 +142,23 @@ public class GroupService {
                 .toList();
     }
 
+    /** Full history, newest first. A read, so no lock and no archive guard. */
+    public List<GroupInviteSummary> listGroupInvites(UUID callerId, UUID groupId) {
+        getGroupOrThrow(groupId);
+        requireAdmin(groupId, callerId);
+        List<GroupInvite> invites = groupInviteRepository.findByGroupIdOrderByCreatedAtDescIdDesc(groupId);
+
+        // Same shape as listMyInvites: one query for every inviter, not one per invite.
+        Map<UUID, String> inviterNames = userRepository.findAllById(
+                        invites.stream().map(GroupInvite::getInvitedBy).distinct().toList())
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(User::getId, User::getFullName));
+
+        return invites.stream()
+                .map(invite -> groupMapper.toInviteSummary(invite, inviterNames.get(invite.getInvitedBy())))
+                .toList();
+    }
+
     @Transactional
     public GroupMemberSummary acceptInvite(UUID callerId, UUID inviteId) {
         requireVerifiedPhone(callerId);

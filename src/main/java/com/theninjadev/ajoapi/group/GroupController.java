@@ -114,6 +114,19 @@ public class GroupController {
         return ResponseEntity.status(HttpStatus.CREATED).body(groupService.inviteMember(currentUserId(), groupId, request));
     }
 
+    @Operation(summary = "List a group's invites",
+            description = "Every invite the group has sent, in every status, newest first. Filter for PENDING "
+                    + "to find invites that can still be revoked.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The group's invites."),
+            @ApiResponse(responseCode = "403", description = "You are not an admin of this group."),
+            @ApiResponse(responseCode = "404", description = "The group does not exist, or you are not a member of it.")
+    })
+    @GetMapping("/{groupId}/invites")
+    public ResponseEntity<List<GroupInviteSummary>> listGroupInvites(@PathVariable UUID groupId) {
+        return ResponseEntity.ok(groupService.listGroupInvites(currentUserId(), groupId));
+    }
+
     @Operation(summary = "Accept an invite")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "You are now a member of the group."),
